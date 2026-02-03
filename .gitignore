@@ -1,3 +1,9 @@
+node_modules/
+.DS_Store
+dist/
+coverage/
+.env
+*.log
 # 依赖目录
 node_modules/
 npm-debug.log*
