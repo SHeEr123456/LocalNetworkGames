@@ -1,11 +1,12 @@
 /**
  * OnlineGameApp：联网对战的“壳”
  * - 负责 WebSocket 连接、房间创建/加入、聊天、通用 UI
- * - 根据房间的 gameType 选择具体游戏实现（象棋/坦克）
+ * - 根据房间的 gameType 选择具体游戏实现（象棋/坦克/飞行棋）
  */
 
 import { ChessGameClient } from "../games/chess/ChessGameClient.js";
 import { TankGameClient } from "../games/tank/TankGameClient.js";
+import { FlyingGameClient } from "../games/flying/FlyingGameClient.js";
 
 export class OnlineGameApp {
   constructor({ el }) {
@@ -41,6 +42,10 @@ export class OnlineGameApp {
     this.el.restartBtn.addEventListener("click", () => this.restartGame());
     this.el.surrenderBtn.addEventListener("click", () => this.surrender());
     this.el.toggleSoundBtn.addEventListener("click", () => this.toggleSound());
+
+    if (this.el.rollDiceBtn) {
+      this.el.rollDiceBtn.addEventListener("click", () => this.rollDice());
+    }
 
     this.updateStatus("等待连接服务器...", "info");
   }
@@ -135,6 +140,17 @@ export class OnlineGameApp {
         if (this.game && this.gameType === "tank") this.game.onTankState(data);
         break;
 
+      case "flying_state":
+        // 飞行棋：同步完整状态
+        if (this.game && this.gameType === "flying") {
+          this.gameState = data.state || data.gameState || null;
+          if (this.gameState) {
+            this.game.onFlyingState(this.gameState);
+            this.updatePlayerInfo();
+          }
+        }
+        break;
+
       case "game_restarted":
         this.gameState = data.gameState;
         if (this.game) this.game.onGameRestarted(data);
@@ -156,16 +172,30 @@ export class OnlineGameApp {
     // 创建/切换游戏实例
     if (this.game) this.game.destroy?.();
 
+    // 先隐藏所有棋盘容器
+    this.el.chessboard.style.display = "none";
+    this.el.tankContainer.style.display = "none";
+    if (this.el.flyingContainer) this.el.flyingContainer.style.display = "none";
+
+    // 掷骰按钮：仅飞行棋显示
+    if (this.el.rollDiceBtn) {
+      this.el.rollDiceBtn.style.display = this.gameType === "flying" ? "inline-block" : "none";
+    }
+
     if (this.gameType === "tank") {
-      this.el.chessboard.style.display = "none";
       this.el.tankContainer.style.display = "block";
       this.game = new TankGameClient({
         app: this,
         canvas: this.el.tankCanvas,
       });
+    } else if (this.gameType === "flying") {
+      if (this.el.flyingContainer) this.el.flyingContainer.style.display = "block";
+      this.game = new FlyingGameClient({
+        app: this,
+        canvas: this.el.flyingCanvas,
+      });
     } else {
       this.el.chessboard.style.display = "block";
-      this.el.tankContainer.style.display = "none";
       this.game = new ChessGameClient({
         app: this,
         boardEl: this.el.chessboard,
@@ -188,11 +218,15 @@ export class OnlineGameApp {
     this.el.connectionPanel.style.display = "block";
     this.el.gameContainer.style.display = "none";
     this.el.roomListContainer.style.display = "none";
+
+    if (this.el.rollDiceBtn) this.el.rollDiceBtn.style.display = "none";
+    if (this.el.flyingContainer) this.el.flyingContainer.style.display = "none";
   }
 
   createRoom() {
     const gameType = this.el.gameSelect?.value || "chess";
-    if (!this.send({ type: "create_room", gameType })) {
+    const maxPlayers = Number(this.el.playerCountSelect?.value || 2);
+    if (!this.send({ type: "create_room", gameType, maxPlayers })) {
       alert("请先连接到服务器");
       return;
     }
@@ -221,6 +255,10 @@ export class OnlineGameApp {
 
   sendTankInput(keys) {
     this.send({ type: "tank_input", keys });
+  }
+
+  sendFlyingAction(payload) {
+    this.send({ type: "flying_action", ...payload });
   }
 
   sendChatFromInput() {
@@ -295,17 +333,34 @@ export class OnlineGameApp {
   }
 
   updatePlayerInfo() {
+    const colorMapText = {
+      red: "红方",
+      black: "黑方",
+      blue: "蓝方",
+      green: "绿方",
+      yellow: "黄方",
+    };
+    const colorMapColor = {
+      red: "#B22222",
+      black: "#000000",
+      blue: "#2b63ff",
+      green: "#1b8a3a",
+      yellow: "#d4b100",
+    };
+
     if (this.playerColor) {
-      this.el.playerColor.textContent =
-        this.playerColor === "red" ? "红方" : this.playerColor === "black" ? "黑方" : "蓝方";
-      this.el.playerColor.style.color =
-        this.playerColor === "red" ? "#B22222" : this.playerColor === "black" ? "#000000" : "#2b63ff";
+      const txt = colorMapText[this.playerColor] || this.playerColor;
+      const col = colorMapColor[this.playerColor] || "#000";
+      this.el.playerColor.textContent = txt;
+      this.el.playerColor.style.color = col;
     }
 
     const turn = this.gameState?.turn;
     if (turn) {
-      this.el.currentTurn.textContent = turn === "red" ? "红方" : turn === "black" ? "黑方" : "蓝方";
-      this.el.currentTurn.style.color = turn === "red" ? "#B22222" : turn === "black" ? "#000000" : "#2b63ff";
+      const txt = colorMapText[turn] || turn;
+      const col = colorMapColor[turn] || "#000";
+      this.el.currentTurn.textContent = txt;
+      this.el.currentTurn.style.color = col;
     }
 
     this.el.roomId.textContent = this.roomId || "-";
@@ -346,14 +401,21 @@ export class OnlineGameApp {
     rooms.forEach((room) => {
       const roomElement = document.createElement("div");
       roomElement.className = "room-item";
+      const gameLabel =
+        room.gameType === "tank"
+          ? "坦克大战"
+          : room.gameType === "flying"
+            ? "飞行棋"
+            : "中国象棋";
+      const maxPlayers = room.maxPlayers || 2;
       roomElement.innerHTML = `
         <div><strong>房间号:</strong> ${room.id}</div>
-        <div><strong>游戏:</strong> ${room.gameType === "tank" ? "坦克大战" : "中国象棋"}</div>
-        <div><strong>玩家:</strong> ${room.playerCount}/2</div>
+        <div><strong>游戏:</strong> ${gameLabel}</div>
+        <div><strong>玩家:</strong> ${room.playerCount}/${maxPlayers}</div>
         <div><small>创建时间: ${new Date(room.created).toLocaleTimeString()}</small></div>
       `;
 
-      if (room.playerCount < 2) {
+      if (room.playerCount < maxPlayers) {
         roomElement.addEventListener("click", () => this.joinRoom(room.id));
       } else {
         roomElement.style.opacity = "0.6";
@@ -365,6 +427,11 @@ export class OnlineGameApp {
     });
 
     this.el.roomListContainer.style.display = "block";
+  }
+
+  rollDice() {
+    if (this.gameType !== "flying") return;
+    this.sendFlyingAction({ action: "roll" });
   }
 }
 

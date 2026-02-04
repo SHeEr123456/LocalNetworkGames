@@ -257,6 +257,37 @@ body {
 }
 
 /* -------------------------
+   飞行棋棋盘
+   ------------------------- */
+#flyingContainer {
+  width: 100%;
+  max-width: 750px;
+  margin: 0 auto;
+}
+
+#flyingCanvas {
+  width: 750px;
+  height: 800px;
+  border: 3px solid #8b4513;
+  background: #fef8e8;
+  display: block;
+  margin: 0 auto;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.flying-hint {
+  text-align: center;
+  margin-top: 15px;
+  color: #333;
+  font-size: 14px;
+  padding: 12px;
+  background: #e3f2fd;
+  border-radius: 6px;
+  line-height: 1.6;
+}
+
+/* -------------------------
    信息面板
    ------------------------- */
 .controls {

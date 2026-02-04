@@ -13,6 +13,7 @@ const app = new OnlineGameApp({
     serverAddress: document.getElementById("serverAddress"),
     connectBtn: document.getElementById("connectBtn"),
     gameSelect: document.getElementById("gameSelect"),
+    playerCountSelect: document.getElementById("playerCountSelect"),
     createRoomBtn: document.getElementById("createRoomBtn"),
     refreshRoomBtn: document.getElementById("refreshRoomBtn"),
     roomListContainer: document.getElementById("roomListContainer"),
@@ -21,6 +22,7 @@ const app = new OnlineGameApp({
     restartBtn: document.getElementById("restartBtn"),
     surrenderBtn: document.getElementById("surrenderBtn"),
     toggleSoundBtn: document.getElementById("toggleSoundBtn"),
+    rollDiceBtn: document.getElementById("rollDiceBtn"),
     playerColor: document.getElementById("playerColor"),
     currentTurn: document.getElementById("currentTurn"),
     roomId: document.getElementById("roomId"),
@@ -31,6 +33,8 @@ const app = new OnlineGameApp({
     chessboard: document.getElementById("chessboard"),
     tankContainer: document.getElementById("tankContainer"),
     tankCanvas: document.getElementById("tankCanvas"),
+    flyingContainer: document.getElementById("flyingContainer"),
+    flyingCanvas: document.getElementById("flyingCanvas"),
   },
 });
 

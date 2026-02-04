@@ -28,6 +28,12 @@
         <select id="gameSelect" class="select">
           <option value="chess">中国象棋</option>
           <option value="tank">坦克大战</option>
+          <option value="flying">飞行棋</option>
+        </select>
+        <select id="playerCountSelect" class="select">
+          <option value="2">2 人</option>
+          <option value="3">3 人</option>
+          <option value="4">4 人</option>
         </select>
         <button class="btn btn-secondary" id="createRoomBtn">创建新房间</button>
         <button class="btn btn-secondary" id="refreshRoomBtn">刷新房间列表</button>
@@ -52,10 +58,20 @@
           <div class="tank-hint">WASD移动，J射击</div>
         </div>
 
+        <div id="flyingContainer" style="display:none;">
+          <canvas id="flyingCanvas" width="750" height="800"></canvas>
+          <div class="flying-hint">
+            <strong>🎲 游戏说明：</strong>点击"掷骰子"按钮掷骰，然后点击高亮的棋子移动。
+            <br><strong>规则：</strong>掷出6点可起飞或额外行动 | 连续3次6点本轮取消 | 起飞后先走到路径再移动
+            <br><strong>特殊格子：</strong>🔵 蓝圈=起飞点 | 🔺 彩色三角=跳跃点 | 🟨 彩色框=跳跃目标 | ⭕ 彩色圆=终点
+          </div>
+        </div>
+
         <div class="controls">
           <button class="btn btn-success" id="restartBtn">重新开始</button>
           <button class="btn" id="surrenderBtn">认输</button>
           <button class="btn" id="toggleSoundBtn">音效: 开</button>
+          <button class="btn" id="rollDiceBtn" style="display:none;">掷骰子</button>
         </div>
       </div>
 

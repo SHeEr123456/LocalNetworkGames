@@ -11,6 +11,11 @@ const {
   tickTankRoom,
   makeTankBroadcastPayload,
 } = require("./games/tank/tankGame");
+const {
+  createFlyingState,
+  ensureFlyingPlayer,
+  applyFlyingAction,
+} = require("./games/flying/flyingGame");
 
 /**
  * 服务器说明
@@ -125,7 +130,7 @@ class GameServer {
 
     switch (data.type) {
       case "create_room":
-        this.createRoom(clientId, data.gameType || "chess");
+        this.createRoom(clientId, data.gameType || "chess", data.maxPlayers);
         break;
       case "join_room":
         this.joinRoom(clientId, data.roomId);
@@ -135,6 +140,9 @@ class GameServer {
         break;
       case "tank_input":
         this.handleTankInput(clientId, data);
+        break;
+      case "flying_action":
+        this.handleFlyingAction(clientId, data);
         break;
       case "chat":
         this.handleChat(clientId, data);
@@ -148,25 +156,36 @@ class GameServer {
     }
   }
 
-  createRoom(clientId, gameType = "chess") {
+  createRoom(clientId, gameType = "chess", maxPlayers) {
     const client = this.clients.get(clientId);
     if (!client) return;
     if (client.roomId) this.leaveRoom(clientId);
+
+    const normalizedMaxPlayers =
+      gameType === "flying" ? Math.max(2, Math.min(4, Number(maxPlayers) || 4)) : 2;
 
     const roomId = this.generateRoomId();
     const room = {
       id: roomId,
       clients: new Set([clientId]),
       gameType,
-      gameState: this.initializeGameState(gameType),
+      gameState: this.initializeGameState(gameType, { maxPlayers: normalizedMaxPlayers }),
       turn: "red",
       created: Date.now(),
+      maxPlayers: normalizedMaxPlayers,
     };
 
     this.rooms.set(roomId, room);
 
     client.roomId = roomId;
-    client.color = "red";
+    if (gameType === "flying") {
+      ensureFlyingPlayer(room, clientId);
+      const playerState = room.gameState.players?.[clientId];
+      client.color = playerState ? playerState.color : null;
+    } else {
+      client.color = "red";
+      if (gameType === "tank") ensureTankPlayers(room);
+    }
 
     client.ws.send(
       JSON.stringify({
@@ -175,6 +194,7 @@ class GameServer {
         color: client.color,
         gameType: room.gameType,
         gameState: room.gameState,
+        maxPlayers: room.maxPlayers,
         message: "房间创建成功，等待其他玩家加入...",
       }),
     );
@@ -188,15 +208,21 @@ class GameServer {
 
     const room = this.rooms.get(roomId);
     if (!room) return this.sendError(clientId, "房间不存在");
-    if (room.clients.size >= 2) return this.sendError(clientId, "房间已满");
+    const limit = room.maxPlayers || 2;
+    if (room.clients.size >= limit) return this.sendError(clientId, "房间已满");
 
     if (client.roomId) this.leaveRoom(clientId);
 
     room.clients.add(clientId);
     client.roomId = roomId;
-    client.color = room.gameType === "chess" ? "black" : "blue";
-
-    if (room.gameType === "tank") ensureTankPlayers(room);
+    if (room.gameType === "flying") {
+      ensureFlyingPlayer(room, clientId);
+      const playerState = room.gameState.players?.[clientId];
+      client.color = playerState ? playerState.color : null;
+    } else {
+      client.color = room.gameType === "chess" ? "black" : "blue";
+      if (room.gameType === "tank") ensureTankPlayers(room);
+    }
 
     client.ws.send(
       JSON.stringify({
@@ -205,6 +231,7 @@ class GameServer {
         color: client.color,
         gameType: room.gameType,
         gameState: room.gameState,
+        maxPlayers: room.maxPlayers,
         opponent: Array.from(room.clients).find((id) => id !== clientId),
         message: "加入房间成功，游戏开始！",
       }),
@@ -246,6 +273,18 @@ class GameServer {
     applyTankInput(room, clientId, data.keys);
   }
 
+  handleFlyingAction(clientId, data) {
+    const client = this.clients.get(clientId);
+    if (!client || !client.roomId) return;
+    const room = this.rooms.get(client.roomId);
+    if (!room || room.gameType !== "flying") return;
+
+    const result = applyFlyingAction(room, clientId, data);
+    if (!result.ok) return this.sendError(clientId, result.error);
+
+    this.broadcastToRoom(room.id, result.payload);
+  }
+
   handleChat(clientId, data) {
     const client = this.clients.get(clientId);
     if (!client || !client.roomId) return;
@@ -263,8 +302,17 @@ class GameServer {
     const room = this.rooms.get(client.roomId);
     if (!room) return;
 
-    room.gameState = this.initializeGameState(room.gameType || "chess");
+    room.gameState = this.initializeGameState(room.gameType || "chess", {
+      maxPlayers: room.maxPlayers,
+    });
     room.turn = "red";
+
+    // 重新为坦克 / 飞行棋房间补充玩家状态
+    if (room.gameType === "tank") {
+      ensureTankPlayers(room);
+    } else if (room.gameType === "flying") {
+      Array.from(room.clients).forEach((cid) => ensureFlyingPlayer(room, cid));
+    }
 
     this.broadcastToRoom(room.id, {
       type: "game_restarted",
@@ -322,6 +370,7 @@ class GameServer {
       playerCount: room.clients.size,
       created: room.created,
       gameType: room.gameType || "chess",
+      maxPlayers: room.maxPlayers || 2,
     }));
     this.clients.forEach((client) => {
       if (client.ws.readyState === WebSocket.OPEN) {
@@ -343,6 +392,7 @@ class GameServer {
       playerCount: room.clients.size,
       created: room.created,
       gameType: room.gameType || "chess",
+      maxPlayers: room.maxPlayers || 2,
     }));
     client.ws.send(JSON.stringify({ type: "room_list", rooms: roomList }));
   }
@@ -353,8 +403,9 @@ class GameServer {
     client.ws.send(JSON.stringify({ type: "error", message }));
   }
 
-  initializeGameState(gameType = "chess") {
+  initializeGameState(gameType = "chess", options = {}) {
     if (gameType === "tank") return createTankState();
+    if (gameType === "flying") return createFlyingState(options.maxPlayers || 4);
     return createChessState();
   }
 
