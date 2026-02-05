@@ -1,258 +1,257 @@
 /**
- * 飞行棋房间逻辑（服务端）- 经典飞行棋规则实现
+ * 飞行棋房间逻辑（服务端）- 按照新矩阵重构
  * 
  * 游戏规则：
  * 1. 基本规则：
- *    - 2-4名玩家，每位玩家有4架飞机，颜色：红、黄、蓝、绿
- *    - 棋子从基地出发，按顺时针绕外围一周，最后进入同色终点通道
- *    - 需要精确点数到达终点，超过则倒退
+ *    - 4名玩家，每位玩家有4枚棋子，颜色：黄、蓝、红、绿
+ *    - 棋子从基地出发，按照各自路径移动，最后进入终点
  * 
  * 2. 起飞规则：
- *    - 掷出6点可选择：①从基地起飞一架飞机 ②让已起飞的飞机前进6步
+ *    - 掷出6点可选择：①从基地起飞一枚棋子到101/201/301/401 ②让已起飞的棋子前进6步
  *    - 掷出6点可额外获得一次掷骰机会（连续三次6点则本轮作废）
  * 
- * 3. 移动规则：
- *    - 飞机只能向前移动
- *    - 落点有敌方飞机则将其击落回基地
- *    - 落点有己方飞机则形成叠子（叠子同时移动且受保护）
- *    - 经过同色跳跃点可跳到下一个同色格子
- *    - 飞机进入终点通道后只能由己方棋子移动
+ * 3. 移动路径：
+ *    - 黄色：100(基地) → 101(起飞) → 001-054 → 110-150 → 111(终点)
+ *    - 蓝色：200(基地) → 201(起飞) → 015-056-001-012 → 210-250 → 222(终点)
+ *    - 红色：300(基地) → 301(起飞) → 029-056-001-026 → 310-350 → 333(终点)
+ *    - 绿色：400(基地) → 401(起飞) → 043-056-001-040 → 410-450 → 444(终点)
  * 
- * 4. 特殊格子：
- *    - 起飞点（同色大三角）：安全区，不会被击落
- *    - 跳跃点（同色小三角形）：跳跃到下一个同色格子
- *    - 终点通道：只有己方飞机可进入
- *    - 普通格子：可被击落
+ * 4. 打飞机规则：
+ *    - 通过普通行走到达与自身相同颜色的格子（非x00）时，跳跃4个距离到下一个相同颜色格子
+ * 
+ * 5. 特殊跳跃：
+ *    - 绿色棋子到达006 → 直接跳到018（不触发打飞机）
+ *    - 黄色棋子到达020 → 直接跳到032（不触发打飞机）
+ *    - 蓝色棋子到达034 → 直接跳到046（不触发打飞机）
+ *    - 红色棋子到达048 → 直接跳到004（不触发打飞机）
+ * 
+ * 6. 特殊格子颜色：
+ *    - x00格子与对应棋子颜色一致
+ *    - 001-056：从001为绿色起始，按黄、蓝、红、绿循环
  */
 
 // 游戏状态枚举
 const GAME_PHASE = {
-  WAITING_DICE: "WAITING_DICE",       // 等待掷骰子
-  SELECTING_PLANE: "SELECTING_PLANE", // 选择要移动的飞机
-  MOVING: "MOVING",                   // 执行移动中
-  ANIMATING: "ANIMATING",             // 动画播放中
-  CHECKING_EVENTS: "CHECKING_EVENTS", // 检查棋盘事件
-  NEXT_PLAYER: "NEXT_PLAYER",         // 切换到下一位玩家
-  GAME_OVER: "GAME_OVER",             // 游戏结束
+  WAITING_DICE: "WAITING_DICE",
+  SELECTING_PLANE: "SELECTING_PLANE",
+  MOVING: "MOVING",
+  GAME_OVER: "GAME_OVER",
 };
 
-const COLORS = ["red", "yellow", "blue", "green"];
+const COLORS = ["yellow", "blue", "red", "green"];
 const COLOR_NAMES = {
-  red: "红方",
   yellow: "黄方",
   blue: "蓝方",
+  red: "红方",
   green: "绿方",
 };
 
-// 棋盘配置
-const GRID_SIZE = 16;                 // 棋盘大小 16x15
-const TRACK_LEN = 52;                 // 外围跑道长度（路径格子总数）
-const END_PATH_LEN = 3;               // 终点通道长度（到达终点需要走3格2）
-const PIECES_PER_PLAYER = 4;          // 每位玩家的飞机数量
-const MAX_CONSECUTIVE_SIX = 3;        // 连续三次6则取消本轮
-
-// 特殊格子类型
-const CELL_TYPE = {
-  NORMAL: "NORMAL",           // 普通格子
-  START: "START",             // 起飞点（安全区）
-  JUMP: "JUMP",               // 跳跃点
-  END_ENTRANCE: "END_ENTRANCE", // 终点通道入口
-};
+const PIECES_PER_PLAYER = 4;
+const MAX_CONSECUTIVE_SIX = 3;
 
 /**
- * 棋盘数据结构 - 15x15格子布局
+ * 棋盘布局（15行x15列）- 按照提供的矩阵
  * 
- * 格子类型：
- * 0 = 空白
- * 1 = 路径（普通格子）
- * 2 = 终点通道
- * 3 = 基地
- * 4 = 起飞点（掷6点起飞的地方）
- * 5 = 跳跃点（可以跳到下一个6的位置）
- * 6 = 跳跃目标点
- * 8 = 红色终点
- * 9 = 黄色终点
- * 10 = 蓝色终点
- * 11 = 绿色终点
- * 
- * 棋盘布局（14x15）：
+ * 格子编号规则：
+ * 000 = 空白
+ * 001-056 = 主路径（按绿、黄、蓝、红循环着色）
+ * 1xx = 黄色区域（100基地，101起飞点，110-150终点通道，111终点）
+ * 2xx = 蓝色区域（200基地，201起飞点，210-250终点通道，222终点）
+ * 3xx = 红色区域（300基地，301起飞点，310-350终点通道，333终点）
+ * 4xx = 绿色区域（400基地，401起飞点，410-450终点通道，444终点）
+ * 555 = 中心区域
  */
 const BOARD_LAYOUT = [
-  [0,0,0,0,1,1,1,1,1,1,1,4,0,0,0],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [4,0,0,0,95,0,0,1,0,0,96,0,0,0,0],
-  [1,1,1,116,1,0,0,1,0,0,1,85,1,1,1],
-  [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
-  [1,0,0,0,0,0,2,10,2,0,0,0,0,0,1],
-  [1,1,1,1,1,1,8,2,11,1,1,1,1,1,1],
-  [1,0,0,0,0,0,2,9,2,0,0,0,0,0,1],
-  [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
-  [1,1,1,115,1,0,0,1,0,0,1,86,1,1,1],
-  [0,0,0,0,106,0,0,1,0,0,105,0,0,0,4],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [0,0,0,4,1,1,1,1,1,1,1,0,0,0,0],
+  [0,0,0,0,8,9,10,11,12,13,14,201,0,0,0],
+  [0,100,100,0,7,0,0,210,0,0,15,0,200,200,0],
+  [0,100,100,0,6,0,0,220,0,0,16,0,200,200,0],
+  [101,0,0,0,5,0,0,230,0,0,17,0,0,0,0],
+  [1,2,3,4,0,0,0,240,0,0,0,18,19,20,21],
+  [52,0,0,0,0,0,0,250,0,0,0,0,0,0,22],
+  [51,0,0,0,0,0,555,222,555,0,0,0,0,0,23],
+  [50,110,120,130,140,150,111,555,333,350,340,330,320,310,24],
+  [49,0,0,0,0,0,555,444,555,0,0,0,0,0,25],
+  [48,0,0,0,0,0,0,450,0,0,0,0,0,0,26],
+  [47,46,45,44,0,0,0,440,0,0,0,30,29,28,27],
+  [0,0,0,0,43,0,0,430,0,0,31,0,0,0,301],
+  [0,400,400,0,42,0,0,420,0,0,32,0,300,300,0],
+  [0,400,400,0,41,0,0,410,0,0,33,0,300,300,0],
+  [0,0,0,401,40,39,38,37,36,35,34,0,0,0,0]
 ];
+
+/**
+ * 创建格子编号到坐标的映射
+ */
+function createCellMap() {
+  const cellMap = {};
+  for (let row = 0; row < BOARD_LAYOUT.length; row++) {
+    for (let col = 0; col < BOARD_LAYOUT[row].length; col++) {
+      const cellNum = BOARD_LAYOUT[row][col];
+      if (cellNum > 0) {
+        cellMap[cellNum] = { row, col, cellNum };
+      }
+    }
+  }
+  return cellMap;
+}
+
+/**
+ * 生成各颜色的完整路径
+ * 返回：{ yellow: [...], blue: [...], red: [...], green: [...] }
+ */
+function generateColorPaths() {
+  const cellMap = createCellMap();
+  
+  // 黄色路径：101 → 001-050 → 110-150 → 111
+  const yellowPath = [
+    101, // 起飞点
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    110, 120, 130, 140, 150, // 终点通道
+    111 // 终点
+  ];
+  
+  // 蓝色路径：201 → 014-052-001-010 → 210-250 → 222
+  const bluePath = [
+    201, // 起飞点
+    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    51, 52,
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    210, 220, 230, 240, 250, // 终点通道
+    222 // 终点
+  ];
+  
+  // 红色路径：301 → 027-052-001-024 → 310-350 → 333
+  const redPath = [
+    301, // 起飞点
+    27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    51, 52,
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+    310, 320, 330, 340, 350, // 终点通道
+    333 // 终点
+  ];
+  
+  // 绿色路径：401 → 040-052-001-037 → 410-450 → 444
+  const greenPath = [
+    401, // 起飞点
+    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+    410, 420, 430, 440, 450, // 终点通道
+    444 // 终点
+  ];
+  
+  // 转换为带坐标的路径
+  const convertPath = (path) => {
+    return path.map((cellNum, index) => {
+      const cell = cellMap[cellNum];
+      return {
+        cellNum,
+        row: cell.row,
+        col: cell.col,
+        index
+      };
+    });
+  };
+  
+  return {
+    yellow: convertPath(yellowPath),
+    blue: convertPath(bluePath),
+    red: convertPath(redPath),
+    green: convertPath(greenPath)
+  };
+}
+
+/**
+ * 生成001-052的颜色循环（从001为绿色起始，按黄、蓝、红、绿循环）
+ */
+function generateMainPathColors() {
+  const colors = {};
+  const colorCycle = ["green", "yellow", "blue", "red"]; // 001是绿色
+  
+  for (let i = 1; i <= 52; i++) {
+    colors[i] = colorCycle[(i - 1) % 4];
+  }
+  
+  return colors;
+}
 
 /**
  * 获取棋盘配置
  */
 function getBoardConfig() {
-  // 生成路径序列（按顺时针顺序）
-  const trackPath = generateTrackPath();
+  const colorPaths = generateColorPaths();
+  const mainPathColors = generateMainPathColors();
+  const cellMap = createCellMap();
   
   return {
     layout: BOARD_LAYOUT,
-    gridSize: 16,
+    colorPaths,
+    mainPathColors,
+    cellMap,
     
-    // 基地位置（行，列）
+    // 基地位置（4个格子）
     basePositions: {
-      red: [[1,1], [1,2], [2,1], [2,2]],           // 左上角
-      yellow: [[13,1], [13,2], [14,1], [14,2]],    // 左下角
-      blue: [[1,12], [1,13], [2,12], [2,13]],      // 右上角
-      green: [[13,12], [13,13], [14,12], [14,13]], // 右下角
+      yellow: [[1,1], [1,2], [2,1], [2,2]],
+      blue: [[1,12], [1,13], [2,12], [2,13]],
+      red: [[12,12], [12,13], [13,12], [13,13]],
+      green: [[12,1], [12,2], [13,1], [13,2]],
     },
     
-    // 起飞点位置（行，列）
-    startPositions: {
-      red: [3, 0],      // 左上角起飞点
-      yellow: [15, 3],  // 左下角起飞点
-      blue: [0, 11],    // 右上角起飞点
-      green: [12, 14],  // 右下角起飞点
+    // 起飞点
+    startCells: {
+      yellow: 101,
+      blue: 201,
+      red: 301,
+      green: 401,
     },
     
-    // 起飞点到最近路径的位置
-    startToTrackPositions: {
-      red: [4, 0],      // 红色起飞后第一个1的位置
-      yellow: [15, 4],  // 黄色起飞后第一个1的位置
-      blue: [0, 10],    // 蓝色起飞后第一个1的位置
-      green: [11, 14],  // 绿色起飞后第一个1的位置
+    // 终点
+    endCells: {
+      yellow: 111,
+      blue: 222,
+      red: 333,
+      green: 444,
     },
     
-    // 跳跃点配置（格子5的位置和对应的颜色）
-    jumpPoints: {
-      red: { from: [3, 4], to: [4, 3] },      // 红色跳跃点
-      yellow: { from: [11, 3], to: [12, 4] }, // 黄色跳跃点
-      blue: { from: [3, 10], to: [4, 11] },   // 蓝色跳跃点
-      green: { from: [11, 10], to: [12, 11] },// 绿色跳跃点
+    // 特殊跳跃点映射（颜色 → {from: to}）
+    specialJumps: {
+      green: { 6: 18 },   // 绿色棋子006→018
+      yellow: { 20: 32 }, // 黄色棋子020→032
+      blue: { 34: 46 },   // 蓝色棋子034→046
+      red: { 48: 4 },     // 红色棋子048→004
     },
-    
-    // 终点通道入口（进入终点通道前的位置）
-    endEntrances: {
-      red: [7, 5],      // 红色终点通道入口
-      yellow: [8, 7],   // 黄色终点通道入口
-      blue: [7, 9],     // 蓝色终点通道入口
-      green: [9, 7],    // 绿色终点通道入口
-    },
-    
-    // 终点位置
-    endPositions: {
-      red: [7, 6],      // 8的位置
-      yellow: [8, 7],   // 9的位置
-      blue: [7, 8],     // 10的位置
-      green: [9, 7],    // 11的位置
-    },
-    
-    // 路径序列（顺时针）
-    trackPath: trackPath,
   };
 }
 
 /**
- * 生成路径序列（顺时针遍历所有路径格子）
- */
-function generateTrackPath() {
-  // 手动定义顺时针路径（只包含格子类型为1的格子）
-  const pathCoords = [
-    // 从红色起飞点附近开始，向下
-    [4,0], [5,0], [6,0], [7,0], [8,0], [9,0], [10,0], [11,0],
-    // 向右转
-    [11,1], [11,2], [11,3],
-    // 向上
-    [10,3], [9,3], [8,3], [7,3], [6,3], [5,3], [4,3],
-    // 继续向上到顶部
-    [4,4], [3,4], [2,4], [1,4], [0,4], [0,5], [0,6], [0,7], [0,8], [0,9], [0,10],
-    // 蓝色起飞点附近
-    [0,11], [1,11], [2,11], [3,11],
-    // 向下
-    [4,11], [5,11], [6,11], [7,11], [8,11], [9,11], [10,11], [11,11],
-    // 向右转
-    [11,12], [11,13], [11,14],
-    // 绿色起飞点附近，向下
-    [12,14], [13,14], [14,14], [15,14],
-    // 向左
-    [15,13], [15,12], [15,11], [15,10], [15,9], [15,8], [15,7], [15,6], [15,5], [15,4],
-    // 黄色起飞点附近
-    [15,3], [14,3], [13,3], [12,3],
-    // 向上
-    [11,3], [10,3], [9,3], [8,3], [7,3], [6,3], [5,3], [4,3],
-    // 回到起点附近
-    [4,2], [4,1],
-  ];
-  
-  return pathCoords;
-}
-
-/**
  * 创建飞行棋初始状态
- * @param {number} maxPlayers
  */
 function createFlyingState(maxPlayers = 4) {
   const mp = Math.max(2, Math.min(4, Number(maxPlayers) || 4));
   return {
     gameType: "flying",
-    maxPlayers: mp,
-    
-    // 玩家顺序（clientId 数组）
+    maxPlayers: mp, // 2-4人
     order: [],
-    
-    // clientId -> playerState
     players: {},
-    
-    // 当前轮到 order[currentIndex] 行动
     currentIndex: 0,
-    
-    // 当前骰子点数（null 表示还未掷骰）
     dice: null,
-    
-    // 游戏阶段
     phase: GAME_PHASE.WAITING_DICE,
-    
-    // 当前轮到的颜色（方便前端展示）
     turn: null,
-    
-    // 最近一次动作描述（系统提示用）
     lastAction: null,
-    
-    // 连续掷出6的次数（用于实现"连续三次6取消"规则）
     consecutiveSixCount: 0,
-    
-    // 当前回合是否因为连续三次6而被取消
-    turnCancelled: false,
-    
-    // 可移动的飞机索引列表
     canMovePlanes: [],
-    
-    // 当前选中的飞机
-    selectedPlane: null,
-    
-    // 游戏结束标志
     gameOver: false,
-    winner: null, // 颜色字符串
-    
-    // 游戏是否已开始（所有玩家加入后才会开始）
+    winner: null,
     gameStarted: false,
-    
-    // 棋盘配置
     board: getBoardConfig(),
   };
 }
 
 /**
- * 确保房间中存在指定玩家的飞行棋信息
- * - 按加入顺序分配颜色：红、黄、蓝、绿
- * - 当所有玩家加入后，随机打乱顺序并开始游戏
+ * 确保玩家存在
  */
 function ensureFlyingPlayer(room, clientId) {
   const state = room.gameState;
@@ -268,74 +267,45 @@ function ensureFlyingPlayer(room, clientId) {
   state.players[clientId] = {
     id: clientId,
     color,
-    // 初始化所有飞机在基地
     pieces: Array.from({ length: PIECES_PER_PLAYER }, () => ({
-      position: "home",    // 'home' | 'track' | 'end_path' | 'finished'
-      row: -1,             // 在棋盘上的行位置
-      col: -1,             // 在棋盘上的列位置
-      trackIndex: -1,      // 在路径序列中的索引
-      stackedWith: [],     // 叠子：与哪些飞机叠在一起（存储 {playerId, pieceIndex}）
+      position: "home",
+      row: -1,
+      col: -1,
+      pathIndex: -1,
+      cellNum: -1,
     })),
-    finished: 0,           // 已到达终点的飞机数量
+    finished: 0,
   };
 
-  // 当所有玩家加入后，随机确定顺序并开始游戏
-  if (state.order.length === state.maxPlayers && !state.gameStarted) {
+  // 至少2人即可开始游戏
+  if (state.order.length >= 2 && state.order.length === state.maxPlayers && !state.gameStarted) {
     startFlyingGame(state);
   }
 }
 
 /**
- * 游戏开始时，随机确定玩家顺序并初始化所有飞机在基地
+ * 开始游戏
  */
 function startFlyingGame(state) {
-  console.log("[飞行棋] 所有玩家已加入，开始游戏初始化...");
+  console.log("[飞行棋] 游戏开始");
   
-  // 随机打乱玩家顺序
+  // 随机打乱顺序
   for (let i = state.order.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [state.order[i], state.order[j]] = [state.order[j], state.order[i]];
   }
   
-  console.log("[飞行棋] 玩家顺序已随机确定:", state.order.map(id => {
-    const p = state.players[id];
-    return `${COLOR_NAMES[p.color]}(${id.slice(0, 8)})`;
-  }).join(" -> "));
-  
-  // 确保所有飞机都在基地
-  Object.values(state.players).forEach(player => {
-    player.pieces.forEach(piece => {
-      piece.position = "home";
-      piece.row = -1;
-      piece.col = -1;
-      piece.trackIndex = -1;
-      piece.stackedWith = [];
-    });
-    player.finished = 0;
-  });
-  
-  // 设置第一个玩家的回合
   state.currentIndex = 0;
-  state.dice = null;
-  state.phase = GAME_PHASE.WAITING_DICE;
-  state.consecutiveSixCount = 0;
-  state.turnCancelled = false;
-  state.canMovePlanes = [];
-  state.selectedPlane = null;
   state.gameStarted = true;
+  state.phase = GAME_PHASE.WAITING_DICE;
   
   const firstPlayer = state.players[state.order[0]];
   state.turn = firstPlayer.color;
   state.lastAction = `游戏开始！${COLOR_NAMES[firstPlayer.color]} 先手`;
-  
-  console.log(`[飞行棋] 游戏开始！当前回合: ${COLOR_NAMES[state.turn]}`);
-  console.log(`[飞行棋] 状态: ${state.phase}`);
 }
 
 /**
- * 服务端处理飞行棋行动 - 严格的状态机流程
- * 核心循环：掷骰子→判断起飞条件→选择移动的飞机→执行移动→触发格子事件→检查是否到达终点→切换到下一位玩家
- * data: { action: 'roll' } 或 { action: 'move', pieceIndex:number }
+ * 处理飞行棋行动
  */
 function applyFlyingAction(room, clientId, data) {
   const state = room.gameState;
@@ -346,11 +316,11 @@ function applyFlyingAction(room, clientId, data) {
     return { ok: false, error: "游戏已结束" };
   }
   if (!state.gameStarted) {
-    return { ok: false, error: "游戏尚未开始，等待所有玩家加入" };
+    return { ok: false, error: "游戏尚未开始" };
   }
 
-  const currentPlayerId = state.order[state.currentIndex] || null;
-  if (!currentPlayerId || currentPlayerId !== clientId) {
+  const currentPlayerId = state.order[state.currentIndex];
+  if (currentPlayerId !== clientId) {
     return { ok: false, error: "还没轮到你行动" };
   }
 
@@ -359,539 +329,340 @@ function applyFlyingAction(room, clientId, data) {
     return { ok: false, error: "玩家信息不存在" };
   }
 
-  const action = data.action;
-  
-  // 阶段1 - 掷骰子
-  if (action === "roll") {
+  if (data.action === "roll") {
     return handleRollDice(state, player);
-  } 
-  // 阶段2-6 - 选择并移动飞机
-  else if (action === "move") {
+  } else if (data.action === "move") {
     return handleMovePlane(state, player, data);
-  } else {
-    return { ok: false, error: "未知操作" };
   }
+  
+  return { ok: false, error: "未知操作" };
 }
 
 /**
- * 阶段1 - 掷骰子
- * 规则：掷出6获得额外回合；连续三次6则本轮行动取消
+ * 掷骰子
  */
 function handleRollDice(state, player) {
   if (state.phase !== GAME_PHASE.WAITING_DICE) {
-    return { ok: false, error: `当前不能掷骰子，状态: ${state.phase}` };
+    return { ok: false, error: "当前不能掷骰子" };
   }
-  
-  console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 开始掷骰子...`);
   
   const dice = Math.floor(Math.random() * 6) + 1;
   state.dice = dice;
   
-  console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 掷出了 ${dice} 点`);
+  console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 掷出 ${dice} 点`);
   
-  // 检查连续三次6的规则
+  // 检查连续6
   if (dice === 6) {
     state.consecutiveSixCount += 1;
-    console.log(`[飞行棋] 连续6的次数: ${state.consecutiveSixCount}`);
-    
     if (state.consecutiveSixCount >= MAX_CONSECUTIVE_SIX) {
-      // 连续三次6，取消本轮行动
-      state.turnCancelled = true;
-      state.lastAction = `${COLOR_NAMES[player.color]} 连续三次掷出6点，本轮行动取消！`;
-      console.log(`[飞行棋] ⚠️ ${COLOR_NAMES[player.color]} 连续三次6，本轮行动取消！`);
-      
-      // 重置状态并切换到下一位玩家
+      state.lastAction = `${COLOR_NAMES[player.color]} 连续三次6，本轮取消！`;
       state.dice = null;
       state.consecutiveSixCount = 0;
-      state.turnCancelled = false;
       state.canMovePlanes = [];
-      state.phase = GAME_PHASE.WAITING_DICE;
       advanceTurn(state);
-      updateTurnInfo(state);
-      
-      return {
-        ok: true,
-        payload: {
-          type: "flying_state",
-          gameType: "flying",
-          state,
-        },
-      };
-    } else {
-      state.lastAction = `${COLOR_NAMES[player.color]} 掷出了 6 点！可以起飞或移动，且获得额外回合`;
+      return { ok: true, payload: { type: "flying_state", gameType: "flying", state } };
     }
   } else {
-    // 非6点，重置连续6计数
     state.consecutiveSixCount = 0;
-    state.lastAction = `${COLOR_NAMES[player.color]} 掷出了 ${dice} 点`;
   }
   
-  // 判断起飞条件 - 检查是否有可移动的棋子
+  state.lastAction = `${COLOR_NAMES[player.color]} 掷出 ${dice} 点`;
+  
+  // 检查可移动的棋子
   const legalMoves = getLegalMoves(state, player, dice);
   state.canMovePlanes = legalMoves;
   
   if (legalMoves.length === 0) {
-    console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 无子可走，自动跳过`);
-    state.lastAction = `${COLOR_NAMES[player.color]} 无子可走，轮到下一位玩家`;
-    
-    // 重置状态并切换到下一位玩家
-    state.dice = null;
-    state.consecutiveSixCount = 0;
-    state.canMovePlanes = [];
-    state.phase = GAME_PHASE.WAITING_DICE;
-    
-    // 如果掷出的是6，也不获得额外回合（因为无子可走）
-    advanceTurn(state);
-    updateTurnInfo(state);
-    
-    return {
-      ok: true,
-      payload: {
-        type: "flying_state",
-        gameType: "flying",
-        state,
-      },
-    };
-  }
-  
-  // 如果只有一个可移动的棋子，自动选择并移动
-  if (legalMoves.length === 1) {
-    console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 只有一个可移动的棋子，自动移动`);
+    state.lastAction = `${COLOR_NAMES[player.color]} 无子可走`;
+    // 先进入选择阶段，让客户端显示骰子
     state.phase = GAME_PHASE.SELECTING_PLANE;
-    return handleMovePlane(state, player, { pieceIndex: legalMoves[0] });
+    
+    // 返回状态，让客户端显示骰子动画
+    return { ok: true, payload: { type: "flying_state", gameType: "flying", state }, noMoves: true };
   }
   
-  console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 可移动的棋子: ${legalMoves.map(i => i + 1).join(", ")}`);
+  // 进入选择棋子阶段
   state.phase = GAME_PHASE.SELECTING_PLANE;
   
-  return {
-    ok: true,
-    payload: {
-      type: "flying_state",
-      gameType: "flying",
-      state,
-    },
-  };
+  // 不论有几个可移动棋子，都先返回状态让客户端显示骰子
+  return { ok: true, payload: { type: "flying_state", gameType: "flying", state } };
 }
 
 /**
- * 阶段2-6 - 选择并移动飞机
- * 流程：选择移动的飞机→执行移动→触发格子事件→检查是否到达终点→切换到下一位玩家
+ * 移动棋子
  */
 function handleMovePlane(state, player, data) {
   if (state.phase !== GAME_PHASE.SELECTING_PLANE) {
-    return { ok: false, error: `当前不能移动飞机，状态: ${state.phase}` };
-  }
-  if (typeof state.dice !== "number") {
-    return { ok: false, error: "请先掷骰子" };
+    return { ok: false, error: "当前不能移动" };
   }
   
   const pieceIndex = Number(data.pieceIndex);
-  if (!Number.isInteger(pieceIndex) || pieceIndex < 0 || pieceIndex >= PIECES_PER_PLAYER) {
-    return { ok: false, error: "棋子编号不合法" };
-  }
-  
-  // 检查该棋子是否在可移动列表中
-  if (state.canMovePlanes.length > 0 && !state.canMovePlanes.includes(pieceIndex)) {
+  if (!state.canMovePlanes.includes(pieceIndex)) {
     return { ok: false, error: "该棋子不能移动" };
   }
   
-  console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 选择移动第 ${pieceIndex + 1} 枚棋子`);
   state.phase = GAME_PHASE.MOVING;
-  state.selectedPlane = pieceIndex;
   
-  // 阶段3 - 执行移动
-  const moveResult = applyFlyingMove(state, player, pieceIndex, state.dice);
+  const moveResult = applyMove(state, player, pieceIndex, state.dice);
   if (!moveResult.ok) {
-    // 移动失败，回到选择阶段
     state.phase = GAME_PHASE.SELECTING_PLANE;
-    state.selectedPlane = null;
-    return { ok: false, error: moveResult.error || "该棋子不能这样走" };
-  }
-  
-  console.log(`[飞行棋] ${moveResult.message}`);
-  
-  // 阶段4 - 触发格子事件（打飞机、跳跃等）
-  if (moveResult.hitPlayers && moveResult.hitPlayers.length > 0) {
-    moveResult.hitPlayers.forEach(hp => {
-      console.log(`[飞行棋] 触发事件: ${COLOR_NAMES[player.color]} 打回了 ${COLOR_NAMES[hp.color]} 的棋子`);
-    });
-  }
-  
-  if (moveResult.jumped) {
-    console.log(`[飞行棋] 触发跳跃: ${COLOR_NAMES[player.color]} 的棋子跳跃到新位置`);
+    return { ok: false, error: moveResult.error };
   }
   
   state.lastAction = moveResult.message;
   
-  // 阶段5 - 检查是否到达终点
-  const reachedFinish = moveResult.reachedFinish;
-  if (reachedFinish) {
-    console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 第 ${pieceIndex + 1} 枚棋子到达终点！已完成: ${player.finished}/${PIECES_PER_PLAYER}`);
-  }
-  
-  // 阶段6 - 切换到下一位玩家（或继续当前玩家回合，如果掷出6）
-  const diceWasSix = state.dice === 6;
-  const shouldGetExtraTurn = diceWasSix && !state.turnCancelled;
-  
-  // 重置状态
-  state.dice = null;
-  state.canMovePlanes = [];
-  state.selectedPlane = null;
-  state.phase = GAME_PHASE.WAITING_DICE;
-  
-  // 判胜：该玩家 4 子全部到家
+  // 检查胜利
   if (player.finished >= PIECES_PER_PLAYER) {
     state.gameOver = true;
     state.winner = player.color;
     state.phase = GAME_PHASE.GAME_OVER;
-    console.log(`[飞行棋] 🎉 游戏结束！${COLOR_NAMES[player.color]} 获胜！`);
-  } else if (shouldGetExtraTurn) {
-    // 掷出6，获得额外回合（不切换玩家）
-    console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 掷出6点，获得额外回合！`);
-    // 注意：consecutiveSixCount 已在 handleRollDice 中更新，这里不需要重置
+    state.lastAction = `🎉 ${COLOR_NAMES[player.color]} 获胜！`;
   } else {
-    // 正常切换玩家
-    state.consecutiveSixCount = 0; // 重置连续6计数
-    advanceTurn(state);
+    // 检查是否获得额外回合
+    const shouldGetExtraTurn = state.dice === 6;
+    state.dice = null;
+    state.canMovePlanes = [];
+    state.phase = GAME_PHASE.WAITING_DICE;
+    
+    if (!shouldGetExtraTurn) {
+      state.consecutiveSixCount = 0;
+      advanceTurn(state);
+    }
   }
   
-  updateTurnInfo(state);
-  
-  return {
-    ok: true,
-    payload: {
-      type: "flying_state",
-      gameType: "flying",
-      state,
-    },
-  };
+  return { ok: true, payload: { type: "flying_state", gameType: "flying", state } };
 }
 
 /**
- * 获取当前玩家可以合法移动的棋子列表
+ * 获取可移动的棋子
  */
 function getLegalMoves(state, player, dice) {
   const legal = [];
   const board = state.board;
+  const path = board.colorPaths[player.color];
   
   player.pieces.forEach((piece, idx) => {
-    // 检查该棋子是否可以移动
+    if (piece.position === "finished") return;
+    
     if (piece.position === "home") {
-      // 在基地，只有6点才能起飞
-      if (dice === 6) {
-        legal.push(idx);
-      }
+      // 只有掷出6才能起飞
+      if (dice === 6) legal.push(idx);
     } else if (piece.position === "track") {
-      // 在跑道上，检查移动后的位置
-      const nextPos = calculateNextPosition(state, player, piece, dice);
-      if (nextPos.valid) {
+      // 检查是否能移动（不会超出终点）
+      const newIndex = piece.pathIndex + dice;
+      if (newIndex < path.length) {
         legal.push(idx);
+      } else {
+        // 超出终点，需要反弹
+        const overflow = newIndex - (path.length - 1);
+        const finalIndex = (path.length - 1) - overflow;
+        if (finalIndex >= 0) {
+          legal.push(idx);
+        }
       }
-    } else if (piece.position === "end_path") {
-      // 在终点通道上，检查是否能到达终点
-      // 简化：终点通道只需要走到终点格子即可
-      legal.push(idx);
     }
-    // finished 状态的棋子不能移动
   });
   
   return legal;
 }
 
 /**
- * 计算飞机移动后的位置
- * 返回 { valid: boolean, row: number, col: number, trackIndex: number, reachedEnd: boolean }
+ * 执行移动
  */
-function calculateNextPosition(state, player, piece, dice) {
-  const board = state.board;
-  const trackPath = board.trackPath;
-  const layout = board.layout;
-  
-  if (piece.position === "track") {
-    const currentIndex = piece.trackIndex;
-    let newIndex = currentIndex + dice;
-    
-    // 检查是否超出路径
-    if (newIndex >= trackPath.length) {
-      // 检查是否进入终点通道
-      const endPos = board.endPositions[player.color];
-      if (endPos) {
-        // 进入终点通道或到达终点
-        return { valid: true, reachedEnd: true, row: endPos[0], col: endPos[1] };
-      }
-      return { valid: false };
-    }
-    
-    // 检查跳跃点
-    const newCoord = trackPath[newIndex];
-    const cellType = layout[newCoord[0]][newCoord[1]];
-    
-    if (cellType === 5) {
-      // 跳跃点，找到下一个6的位置
-      for (let i = newIndex + 1; i < trackPath.length; i++) {
-        const coord = trackPath[i];
-        if (layout[coord[0]][coord[1]] === 6) {
-          newIndex = i;
-          break;
-        }
-      }
-    }
-    
-    const finalCoord = trackPath[newIndex];
-    return {
-      valid: true,
-      row: finalCoord[0],
-      col: finalCoord[1],
-      trackIndex: newIndex,
-      reachedEnd: false,
-    };
-  }
-  
-  return { valid: false };
-}
-
-/**
- * 阶段3 - 根据骰子尝试移动棋子
- * 包含：判断起飞条件、执行移动、触发格子事件（打飞机、跳跃）
- */
-function applyFlyingMove(state, player, pieceIndex, dice) {
+function applyMove(state, player, pieceIndex, dice) {
   const piece = player.pieces[pieceIndex];
-  if (!piece) return { ok: false, error: "棋子不存在" };
-
   const board = state.board;
-  let hitPlayers = [];
-  let reachedFinish = false;
-  let jumped = false;
-
-  // 判断起飞条件
+  const path = board.colorPaths[player.color];
+  let message = `${COLOR_NAMES[player.color]} 移动第 ${pieceIndex + 1} 枚棋子`;
+  
+  // 从基地起飞
   if (piece.position === "home") {
     if (dice !== 6) {
-      return { ok: false, error: "只有掷出 6 点才能起飞" };
+      return { ok: false, error: "只有6点才能起飞" };
     }
-    // 起飞：进入起飞点
-    const startPos = board.startPositions[player.color];
-    console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 第 ${pieceIndex + 1} 枚棋子起飞到起飞点！`);
+    
+    const startCell = board.startCells[player.color];
+    const startPos = board.cellMap[startCell];
+    
     piece.position = "track";
-    piece.row = startPos[0];
-    piece.col = startPos[1];
-    piece.trackIndex = -1; // 起飞点不在路径序列中
+    piece.pathIndex = 0;
+    piece.cellNum = startCell;
+    piece.row = startPos.row;
+    piece.col = startPos.col;
     
-    // 检查起飞点是否有敌方飞机（起飞点是安全区，不会打飞机）
-    checkStacking(state, player, piece, pieceIndex);
+    message += "，起飞！";
+    checkCollision(state, player, piece, pieceIndex);
     
-  } else if (piece.position === "track") {
-    // 在跑道上移动
-    let stepsToMove = dice;
+    return { ok: true, message };
+  }
+  
+  // 在路径上移动
+  if (piece.position === "track") {
+    let currentIndex = piece.pathIndex;
+    let stepsRemaining = dice;
+    let jumpMessages = [];
+    let hasJumped = false; // 标记是否已经触发过打飞机
     
-    // 如果当前在起飞点（trackIndex === -1），先移动到最近的1路径
-    if (piece.trackIndex === -1) {
-      const startToTrack = board.startToTrackPositions[player.color];
-      piece.row = startToTrack[0];
-      piece.col = startToTrack[1];
+    while (stepsRemaining > 0) {
+      currentIndex++;
+      stepsRemaining--;
       
-      // 找到这个位置在路径序列中的索引
-      const trackPath = board.trackPath;
-      for (let i = 0; i < trackPath.length; i++) {
-        if (trackPath[i][0] === piece.row && trackPath[i][1] === piece.col) {
-          piece.trackIndex = i;
+      // 检查是否超出终点
+      if (currentIndex >= path.length) {
+        // 超出终点，反弹
+        const overflow = currentIndex - (path.length - 1);
+        currentIndex = (path.length - 1) - overflow;
+        
+        if (currentIndex < 0) {
+          return { ok: false, error: "移动距离过远" };
+        }
+      }
+      
+      const currentCell = path[currentIndex];
+      piece.pathIndex = currentIndex;
+      piece.cellNum = currentCell.cellNum;
+      piece.row = currentCell.row;
+      piece.col = currentCell.col;
+    }
+    
+    // 所有移动完成后，检查是否到达终点
+    if (piece.cellNum === board.endCells[player.color]) {
+      piece.position = "finished";
+      player.finished++;
+      message += "，到达终点！";
+      return { ok: true, message };
+    }
+    
+    // 检查特殊规则
+    // 1. 检查特殊跳跃（006→018等）
+    const specialJump = board.specialJumps[player.color];
+    if (specialJump && specialJump[piece.cellNum]) {
+      const targetCell = specialJump[piece.cellNum];
+      
+      // 在路径中找到目标格子
+      for (let i = currentIndex + 1; i < path.length; i++) {
+        if (path[i].cellNum === targetCell) {
+          piece.pathIndex = i;
+          piece.cellNum = path[i].cellNum;
+          piece.row = path[i].row;
+          piece.col = path[i].col;
+          jumpMessages.push(`特殊跳跃→${targetCell}`);
+          
+          // 检查是否到达终点
+          if (piece.cellNum === board.endCells[player.color]) {
+            piece.position = "finished";
+            player.finished++;
+            message += `，${jumpMessages.join('，')}，到达终点！`;
+            return { ok: true, message };
+          }
           break;
         }
       }
-      
-      stepsToMove = dice - 1; // 已经走了1步到路径上
-      console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 第 ${pieceIndex + 1} 枚棋子从起飞点移动到路径，还需移动 ${stepsToMove} 步`);
     }
     
-    if (stepsToMove > 0) {
-      const nextPos = calculateNextPosition(state, player, piece, stepsToMove);
-      if (!nextPos.valid) {
-        return { ok: false, error: "无法移动到该位置" };
-      }
-
-      const oldRow = piece.row;
-      const oldCol = piece.col;
-      
-      if (nextPos.reachedEnd) {
-        // 到达终点
-        piece.position = "finished";
-        piece.row = nextPos.row;
-        piece.col = nextPos.col;
-        piece.trackIndex = -1;
-        player.finished += 1;
-        reachedFinish = true;
-        console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 第 ${pieceIndex + 1} 枚棋子到达终点！`);
-      } else {
-        // 仍在跑道上
-        piece.row = nextPos.row;
-        piece.col = nextPos.col;
-        piece.trackIndex = nextPos.trackIndex;
-        console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 第 ${pieceIndex + 1} 枚棋子从 (${oldRow},${oldCol}) 移动到 (${nextPos.row},${nextPos.col})`);
-        
-        // 检查是否触发跳跃
-        const cellType = board.layout[piece.row][piece.col];
-        if (cellType === 6) {
-          jumped = true;
-          console.log(`[飞行棋] 触发跳跃！到达跳跃目标点`);
-        }
-        
-        // 检查是否打飞机或形成叠子
-        hitPlayers = checkCollision(state, player, piece, pieceIndex);
-      }
-    }
-    
-  } else if (piece.position === "end_path") {
-    // 在终点通道上，直接到达终点
-    const endPos = board.endPositions[player.color];
-    piece.position = "finished";
-    piece.row = endPos[0];
-    piece.col = endPos[1];
-    player.finished += 1;
-    reachedFinish = true;
-    console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 第 ${pieceIndex + 1} 枚棋子到达终点！`);
-    
-  } else if (piece.position === "finished") {
-    return { ok: false, error: "该棋子已经到家了" };
-  }
-
-  const colorName = COLOR_NAMES[player.color] || "玩家";
-  let message = `${colorName} 移动了第 ${pieceIndex + 1} 枚棋子（骰子：${dice} 点）`;
-  
-  if (hitPlayers.length > 0) {
-    const hitNames = hitPlayers.map(hp => COLOR_NAMES[hp.color]).join("、");
-    message += `，打回了 ${hitNames} 的棋子`;
-  }
-  
-  if (jumped) {
-    message += `，触发跳跃`;
-  }
-  
-  if (reachedFinish) {
-    message += `，到达终点！`;
-  }
-  
-  return {
-    ok: true,
-    message,
-    hitPlayers,
-    reachedFinish,
-    jumped,
-  };
-}
-
-/**
- * 检查碰撞：打飞机或形成叠子
- */
-function checkCollision(state, player, piece, pieceIndex) {
-  const hitPlayers = [];
-  const board = state.board;
-  const layout = board.layout;
-  
-  // 检查当前格子类型
-  const cellType = layout[piece.row][piece.col];
-  
-  // 检查是否在起飞点（安全区，格子类型为4）
-  const isOnStartPoint = cellType === 4;
-  
-  Object.values(state.players).forEach((pl) => {
-    pl.pieces.forEach((opPiece, opIdx) => {
-      if (opPiece.position === "track" && 
-          opPiece.row === piece.row && 
-          opPiece.col === piece.col &&
-          !(pl.id === player.id && opIdx === pieceIndex)) {
-        
-        if (pl.id === player.id) {
-          // 己方飞机，形成叠子
-          if (!piece.stackedWith) piece.stackedWith = [];
-          if (!opPiece.stackedWith) opPiece.stackedWith = [];
+    // 2. 检查打飞机（颜色跳跃）- 只在普通行走时触发一次
+    // 判断当前格子是否是自己颜色的格子（001-052范围内）
+    // 排除011、024、037、050这四个格子
+    if (!hasJumped && piece.cellNum >= 1 && piece.cellNum <= 52) {
+      // 排除不触发打飞机的格子
+      if (piece.cellNum !== 11 && piece.cellNum !== 24 && piece.cellNum !== 37 && piece.cellNum !== 50) {
+        const cellColor = board.mainPathColors[piece.cellNum];
+        if (cellColor === player.color) {
+          // 跳跃4格
+          jumpMessages.push("打飞机+4");
+          hasJumped = true; // 标记已触发，防止再次触发
           
-          piece.stackedWith.push({ playerId: pl.id, pieceIndex: opIdx });
-          opPiece.stackedWith.push({ playerId: player.id, pieceIndex });
-          
-          console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 的棋子形成叠子`);
-        } else {
-          // 敌方飞机
-          // 检查对方是否在起飞点（安全区）
-          const opCellType = layout[opPiece.row][opPiece.col];
-          const isOpOnStartPoint = opCellType === 4;
-          
-          // 如果对方在起飞点（安全区），不能打飞机
-          if (!isOpOnStartPoint) {
-            // 检查对方是否有叠子保护
-            if (!opPiece.stackedWith || opPiece.stackedWith.length === 0) {
-              // 打回基地
-              opPiece.position = "home";
-              opPiece.row = -1;
-              opPiece.col = -1;
-              opPiece.trackIndex = -1;
-              opPiece.stackedWith = [];
-              hitPlayers.push(pl);
-              console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 打回了 ${COLOR_NAMES[pl.color]} 的棋子！`);
-            } else {
-              console.log(`[飞行棋] ${COLOR_NAMES[pl.color]} 的棋子有叠子保护，无法打回`);
+          // 继续移动4格
+          currentIndex = piece.pathIndex;
+          for (let i = 0; i < 4; i++) {
+            currentIndex++;
+            
+            // 检查是否超出终点
+            if (currentIndex >= path.length) {
+              // 超出终点，反弹
+              const overflow = currentIndex - (path.length - 1);
+              currentIndex = (path.length - 1) - overflow;
+              
+              if (currentIndex < 0) {
+                return { ok: false, error: "移动距离过远" };
+              }
+            }
+            
+            const jumpCell = path[currentIndex];
+            piece.pathIndex = currentIndex;
+            piece.cellNum = jumpCell.cellNum;
+            piece.row = jumpCell.row;
+            piece.col = jumpCell.col;
+            
+            // 检查是否到达终点
+            if (piece.cellNum === board.endCells[player.color]) {
+              piece.position = "finished";
+              player.finished++;
+              message += `，${jumpMessages.join('，')}，到达终点！`;
+              return { ok: true, message };
             }
           }
         }
       }
-    });
-  });
+    }
+    
+    if (jumpMessages.length > 0) {
+      message += `，${jumpMessages.join('，')}`;
+    }
+    
+    // 检查碰撞
+    checkCollision(state, player, piece, pieceIndex);
+    
+    return { ok: true, message };
+  }
   
-  return hitPlayers;
+  return { ok: false, error: "无法移动" };
 }
 
 /**
- * 检查叠子
+ * 检查碰撞
  */
-function checkStacking(state, player, piece, pieceIndex) {
-  Object.values(state.players).forEach((pl) => {
-    if (pl.id !== player.id) return;
+function checkCollision(state, player, piece, pieceIndex) {
+  const board = state.board;
+  
+  // 起飞点（x01）和终点通道（x10-x50）是安全区
+  const cellNum = piece.cellNum;
+  if (cellNum === 101 || cellNum === 201 || cellNum === 301 || cellNum === 401) {
+    return; // 起飞点安全
+  }
+  if ((cellNum >= 110 && cellNum <= 150) || 
+      (cellNum >= 210 && cellNum <= 250) || 
+      (cellNum >= 310 && cellNum <= 350) || 
+      (cellNum >= 410 && cellNum <= 450)) {
+    return; // 终点通道安全
+  }
+  
+  // 检查是否有其他玩家的棋子在同一位置
+  Object.values(state.players).forEach(pl => {
+    if (pl.id === player.id) return;
     
     pl.pieces.forEach((opPiece, opIdx) => {
       if (opPiece.position === "track" && 
-          opPiece.row === piece.row && 
-          opPiece.col === piece.col &&
-          opIdx !== pieceIndex) {
-        // 己方飞机，形成叠子
-        if (!piece.stackedWith) piece.stackedWith = [];
-        if (!opPiece.stackedWith) opPiece.stackedWith = [];
-        
-        piece.stackedWith.push({ playerId: pl.id, pieceIndex: opIdx });
-        opPiece.stackedWith.push({ playerId: player.id, pieceIndex });
-        
-        console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 的棋子形成叠子`);
+          opPiece.cellNum === piece.cellNum) {
+        // 打回基地
+        opPiece.position = "home";
+        opPiece.row = -1;
+        opPiece.col = -1;
+        opPiece.pathIndex = -1;
+        opPiece.cellNum = -1;
+        console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 打回了 ${COLOR_NAMES[pl.color]} 的棋子`);
       }
     });
   });
 }
 
 /**
- * 切换到下一位玩家
+ * 切换玩家
  */
 function advanceTurn(state) {
-  if (!state.order || state.order.length === 0) return;
-  const oldIndex = state.currentIndex;
   state.currentIndex = (state.currentIndex + 1) % state.order.length;
-  
-  const oldPlayer = state.players[state.order[oldIndex]];
-  const newPlayer = state.players[state.order[state.currentIndex]];
-  
-  if (oldPlayer && newPlayer) {
-    console.log(`[飞行棋] 回合切换: ${COLOR_NAMES[oldPlayer.color]} -> ${COLOR_NAMES[newPlayer.color]}`);
-  }
-}
-
-/**
- * 更新当前回合信息（方便前端显示）
- */
-function updateTurnInfo(state) {
-  if (state.gameOver) return;
-  
-  const currentId = state.order[state.currentIndex];
-  const currentPlayer = state.players[currentId];
-  if (currentPlayer) {
-    state.turn = currentPlayer.color;
-    console.log(`[飞行棋] 当前回合: ${COLOR_NAMES[state.turn]}, 状态: ${state.phase}`);
-  }
+  const currentPlayer = state.players[state.order[state.currentIndex]];
+  state.turn = currentPlayer.color;
 }
 
 module.exports = {
@@ -899,4 +670,3 @@ module.exports = {
   ensureFlyingPlayer,
   applyFlyingAction,
 };
-

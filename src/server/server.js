@@ -283,6 +283,31 @@ class GameServer {
     if (!result.ok) return this.sendError(clientId, result.error);
 
     this.broadcastToRoom(room.id, result.payload);
+    
+    // 如果无子可走，2.5秒后自动切换玩家
+    if (result.noMoves) {
+      setTimeout(() => {
+        const state = room.gameState;
+        if (state && state.phase === "SELECTING_PLANE") {
+          state.dice = null;
+          state.consecutiveSixCount = 0;
+          state.canMovePlanes = [];
+          state.phase = "WAITING_DICE";
+          
+          // 切换玩家
+          state.currentIndex = (state.currentIndex + 1) % state.order.length;
+          const currentPlayer = state.players[state.order[state.currentIndex]];
+          state.turn = currentPlayer.color;
+          
+          // 广播更新后的状态
+          this.broadcastToRoom(room.id, {
+            type: "flying_state",
+            gameType: "flying",
+            state: state
+          });
+        }
+      }, 2500);
+    }
   }
 
   handleChat(clientId, data) {

@@ -1,100 +1,80 @@
 /**
- * FlyingGameClient：客户端飞行棋 - 16x15格子布局
+ * FlyingGameClient：客户端飞行棋 - 按照新矩阵重构
  * 
  * 棋盘布局：
- * 0 = 空白
- * 1 = 路径（普通格子）
- * 2 = 终点通道
- * 3 = 基地
- * 4 = 起飞点（掷6点起飞的地方）
- * 5 = 跳跃点（可以跳到下一个6的位置）
- * 6 = 跳跃目标点
- * 8 = 红色终点
- * 9 = 黄色终点
- * 10 = 蓝色终点
- * 11 = 绿色终点
+ * 000 = 空白
+ * 001-056 = 主路径（按绿、黄、蓝、红循环着色）
+ * 1xx = 黄色区域（100基地，101起飞点，110-150终点通道，111终点）
+ * 2xx = 蓝色区域（200基地，201起飞点，210-250终点通道，222终点）
+ * 3xx = 红色区域（300基地，301起飞点，310-350终点通道，333终点）
+ * 4xx = 绿色区域（400基地，401起飞点，410-450终点通道，444终点）
+ * 555 = 中心区域
  */
 
-// 游戏状态枚举 - 与服务端保持一致
+// 游戏状态枚举
 const GAME_PHASE = {
   WAITING_DICE: "WAITING_DICE",
   SELECTING_PLANE: "SELECTING_PLANE",
   MOVING: "MOVING",
-  ANIMATING: "ANIMATING",
-  CHECKING_EVENTS: "CHECKING_EVENTS",
-  NEXT_PLAYER: "NEXT_PLAYER",
   GAME_OVER: "GAME_OVER",
 };
 
-// 棋盘布局（15x15）
+// 棋盘布局（15x15）- 按照提供的矩阵
 const BOARD_LAYOUT = [
-  [0,0,0,0,1,1,1,1,1,1,1,4,0,0,0],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [4,0,0,0,95,0,0,1,0,0,96,0,0,0,0],
-  [1,1,1,116,1,0,0,1,0,0,1,85,1,1,1],
-  [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
-  [1,0,0,0,0,0,2,10,2,0,0,0,0,0,1],
-  [1,1,1,1,1,1,8,2,11,1,1,1,1,1,1],
-  [1,0,0,0,0,0,2,9,2,0,0,0,0,0,1],
-  [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
-  [1,1,1,115,1,0,0,1,0,0,1,86,1,1,1],
-  [0,0,0,0,106,0,0,1,0,0,105,0,0,0,4],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [0,3,3,0,1,0,0,1,0,0,1,0,3,3,0],
-  [0,0,0,4,1,1,1,1,1,1,1,0,0,0,0],
+  [0,0,0,0,8,9,10,11,12,13,14,201,0,0,0],
+  [0,100,100,0,7,0,0,210,0,0,15,0,200,200,0],
+  [0,100,100,0,6,0,0,220,0,0,16,0,200,200,0],
+  [101,0,0,0,5,0,0,230,0,0,17,0,0,0,0],
+  [1,2,3,4,0,0,0,240,0,0,0,18,19,20,21],
+  [52,0,0,0,0,0,0,250,0,0,0,0,0,0,22],
+  [51,0,0,0,0,0,555,222,555,0,0,0,0,0,23],
+  [50,110,120,130,140,150,111,555,333,350,340,330,320,310,24],
+  [49,0,0,0,0,0,555,444,555,0,0,0,0,0,25],
+  [48,0,0,0,0,0,0,450,0,0,0,0,0,0,26],
+  [47,46,45,44,0,0,0,440,0,0,0,30,29,28,27],
+  [0,0,0,0,43,0,0,430,0,0,31,0,0,0,301],
+  [0,400,400,0,42,0,0,420,0,0,32,0,300,300,0],
+  [0,400,400,0,41,0,0,410,0,0,33,0,300,300,0],
+  [0,0,0,401,40,39,38,37,36,35,34,0,0,0,0]
 ];
-
-// 跳跃点颜色映射（根据位置判断属于哪个颜色）
-// 黄色：跳跃点95，目标点96
-// 红色：跳跃点85，目标点86
-// 蓝色：跳跃点105，目标点106
-// 绿色：跳跃点115，目标点116
-const JUMP_POINT_COLORS = {
-  '3,4': 'yellow',   // 黄色跳跃点 (95)
-  '4,11': 'red',     // 红色跳跃点 (85)
-  '11,10': 'blue',   // 蓝色跳跃点 (105)
-  '10,3': 'green',   // 绿色跳跃点 (115)
-};
-
-const JUMP_TARGET_COLORS = {
-  '3,10': 'yellow',  // 黄色目标点 (96)
-  '4,11': 'red',     // 红色目标点 (86)
-  '11,10': 'blue',   // 蓝色目标点 (106)
-  '4,3': 'green',    // 绿色目标点 (116)
-};
 
 export class FlyingGameClient {
   constructor({ app, canvas }) {
     this.app = app;
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-
     this.state = null;
     
-    // 骰子动画相关
-    this.diceAnimation = {
-      isAnimating: false,
-      currentValue: null,
-      rotation: 0,
-      animationStartTime: 0,
-      duration: 800,
-    };
+    // 骰子动画（已移除，不再需要）
+    // this.diceAnimation = { ... };
 
     this._onClick = (e) => this.handleClick(e);
     
-    // 棋盘布局参数
+    // 棋盘配置
     this.boardConfig = {
       cellSize: 50,
-      gridSize: 16,
       layout: BOARD_LAYOUT,
       colors: {
-        red: "#ff4d4f",
         yellow: "#faad14",
         blue: "#1890ff",
+        red: "#ff4d4f",
         green: "#52c41a",
       },
     };
+    
+    // 生成主路径颜色映射（001-056）
+    this.mainPathColors = this.generateMainPathColors();
+  }
+  
+  generateMainPathColors() {
+    const colors = {};
+    const colorCycle = ["green", "yellow", "blue", "red"]; // 001是绿色
+    
+    for (let i = 1; i <= 52; i++) {
+      colors[i] = colorCycle[(i - 1) % 4];
+    }
+    
+    return colors;
   }
 
   initWithState(state) {
@@ -114,96 +94,123 @@ export class FlyingGameClient {
   }
 
   onFlyingState(nextState) {
-    const oldPhase = this.state?.phase;
-    const newPhase = nextState?.phase;
     const oldDice = this.state?.dice;
     const newDice = nextState?.dice;
     
-    if (oldPhase !== newPhase) {
-      console.log(`[客户端] 状态转换: ${oldPhase || "初始"} -> ${newPhase}`);
-    }
+    console.log('[飞行棋客户端] 收到状态更新:', {
+      oldDice,
+      newDice,
+      phase: nextState.phase,
+      turn: nextState.turn
+    });
     
-    // 检测到新骰子值时启动动画
-    if (newDice && newDice !== oldDice && newPhase === GAME_PHASE.SELECTING_PLANE) {
-      this.startDiceAnimation(newDice);
-    }
-    
-    if (nextState?.turn) {
-      const colorNames = { red: "红方", yellow: "黄方", blue: "蓝方", green: "绿方" };
-      console.log(`[客户端] 当前回合: ${colorNames[nextState.turn] || nextState.turn}`);
-    }
-    
-    if (nextState?.lastAction) {
-      console.log(`[客户端] ${nextState.lastAction}`);
+    // 检测到新骰子值时播放GIF动画（不论点数，只要有变化就播放）
+    if (newDice !== null && newDice !== undefined && newDice !== oldDice) {
+      console.log('[飞行棋客户端] 触发骰子动画:', newDice);
+      this.showDiceAnimation(newDice);
+      
+      // 在聊天区域显示掷骰子结果
+      const colorNames = {
+        yellow: "黄方",
+        blue: "蓝方",
+        red: "红方",
+        green: "绿方",
+      };
+      const playerColor = nextState.turn;
+      const playerName = colorNames[playerColor] || "玩家";
+      this.app.addChatMessage("游戏", `${playerName} 掷出 ${newDice} 点`, true);
     }
     
     this.state = nextState;
     this.render();
+    
+    // 将其他游戏信息输出到棋谱记录（排除掷骰子信息，因为已经单独处理）
+    if (nextState.lastAction && !nextState.lastAction.includes("掷出")) {
+      this.app.addChatMessage("游戏", nextState.lastAction, true);
+    }
 
     if (this.state?.gameOver) {
       const winner = this.state.winner;
-      let text = "游戏结束";
       if (winner) {
-        const map = { red: "红方胜利！", yellow: "黄方胜利！", blue: "蓝方胜利！", green: "绿方胜利！" };
-        text = map[winner] || "有玩家获胜！";
+        const map = { yellow: "黄方胜利！", blue: "蓝方胜利！", red: "红方胜利！", green: "绿方胜利！" };
+        const text = map[winner] || "有玩家获胜！";
+        this.app.addChatMessage("系统", text, true);
       }
-      console.log(`[客户端] 🎉 ${text}`);
-      this.app.addChatMessage("系统", text, true);
     }
   }
   
-  /**
-   * 启动骰子动画
-   */
-  startDiceAnimation(finalValue) {
-    this.diceAnimation.isAnimating = true;
-    this.diceAnimation.currentValue = null;
-    this.diceAnimation.rotation = 0;
-    this.diceAnimation.animationStartTime = Date.now();
+  showDiceAnimation(diceValue) {
+    console.log('[飞行棋客户端] 显示骰子动画:', diceValue);
     
-    const animate = () => {
-      const elapsed = Date.now() - this.diceAnimation.animationStartTime;
-      const progress = Math.min(elapsed / this.diceAnimation.duration, 1);
-      
-      this.diceAnimation.rotation = progress * 360 * 3;
-      
-      if (progress < 0.9) {
-        this.diceAnimation.currentValue = Math.floor(Math.random() * 6) + 1;
-      } else {
-        this.diceAnimation.currentValue = finalValue;
-      }
-      
-      this.render();
-      
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      } else {
-        this.diceAnimation.isAnimating = false;
-        this.diceAnimation.currentValue = finalValue;
-        this.render();
-      }
+    // 创建弹窗容器
+    const overlay = document.createElement('div');
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    overlay.style.display = 'flex';
+    overlay.style.justifyContent = 'center';
+    overlay.style.alignItems = 'center';
+    overlay.style.zIndex = '10000';
+    
+    // 创建GIF图片
+    const img = document.createElement('img');
+    // 修复路径：使用相对路径
+    img.src = `./gif/${diceValue}.gif`;
+    img.alt = `骰子${diceValue}点`;
+    img.style.maxWidth = '400px';
+    img.style.maxHeight = '400px';
+    img.style.borderRadius = '10px';
+    img.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.5)';
+    img.style.backgroundColor = '#fff';
+    
+    // 添加加载错误处理
+    img.onerror = () => {
+      console.error('[飞行棋客户端] GIF加载失败:', img.src);
+      // 如果GIF加载失败，显示文字
+      const text = document.createElement('div');
+      text.textContent = `🎲 ${diceValue}`;
+      text.style.fontSize = '120px';
+      text.style.color = '#fff';
+      text.style.fontWeight = 'bold';
+      text.style.textShadow = '0 4px 20px rgba(0, 0, 0, 0.8)';
+      overlay.innerHTML = '';
+      overlay.appendChild(text);
     };
     
-    animate();
+    img.onload = () => {
+      console.log('[飞行棋客户端] GIF加载成功:', img.src);
+    };
+    
+    overlay.appendChild(img);
+    document.body.appendChild(overlay);
+    
+    // 2秒后自动移除弹窗
+    setTimeout(() => {
+      if (document.body.contains(overlay)) {
+        document.body.removeChild(overlay);
+      }
+    }, 2000);
   }
-
+  
   handleClick(e) {
     if (!this.state || this.app.gameType !== "flying") return;
     
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // 检查是否点击了棋子
     if (this.state.phase !== GAME_PHASE.SELECTING_PLANE || !this.state.dice) {
-      console.log(`[客户端] 当前状态 ${this.state.phase} 不允许选择棋子`);
       return;
     }
     
     const currentPlayerId = this.state.order?.[this.state.currentIndex];
     if (currentPlayerId !== this.app.clientId) {
-      console.log(`[客户端] 还没轮到你行动`);
       return;
     }
-
-    const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
 
     const hits = this.computeHitAreas();
     const myId = this.app.clientId;
@@ -215,20 +222,15 @@ export class FlyingGameClient {
     });
 
     if (picked) {
-      console.log(`[客户端] 选择移动第 ${picked.pieceIndex + 1} 枚棋子`);
       this.app.sendFlyingAction({ action: "move", pieceIndex: picked.pieceIndex });
     }
   }
 
-  /**
-   * 获取棋子的屏幕坐标
-   */
   getPiecePosition(piece, color, pieceIndex) {
-    const { cellSize, layout } = this.boardConfig;
+    const { cellSize } = this.boardConfig;
     const board = this.state?.board;
     
     if (piece.position === "home") {
-      // 在基地
       if (!board || !board.basePositions) return { x: 0, y: 0 };
       const baseCoords = board.basePositions[color];
       if (!baseCoords || pieceIndex >= baseCoords.length) return { x: 0, y: 0 };
@@ -238,8 +240,7 @@ export class FlyingGameClient {
         x: coord[1] * cellSize + cellSize / 2,
         y: coord[0] * cellSize + cellSize / 2,
       };
-    } else if (piece.position === "track" || piece.position === "end_path" || piece.position === "finished") {
-      // 在跑道上、终点通道或已完成
+    } else if (piece.position === "track" || piece.position === "finished") {
       if (piece.row >= 0 && piece.col >= 0) {
         return {
           x: piece.col * cellSize + cellSize / 2,
@@ -251,16 +252,13 @@ export class FlyingGameClient {
     return { x: 0, y: 0 };
   }
 
-  /**
-   * 计算可点击区域
-   */
   computeHitAreas() {
     const areas = [];
     if (!this.state || !this.state.players) return areas;
 
     Object.values(this.state.players).forEach((p) => {
       p.pieces.forEach((piece, idx) => {
-        if (piece.position === "finished") return; // 已完成的棋子不显示
+        if (piece.position === "finished") return;
         
         const pos = this.getPiecePosition(piece, p.color, idx);
         
@@ -277,17 +275,14 @@ export class FlyingGameClient {
     return areas;
   }
 
-  /**
-   * 主渲染函数
-   */
   render() {
     const ctx = this.ctx;
     const canvas = this.canvas;
-    const { cellSize, gridSize } = this.boardConfig;
+    const { cellSize } = this.boardConfig;
     
-    // 设置画布大小
+    // 设置画布大小 - 只显示棋盘
     canvas.width = 15 * cellSize;
-    canvas.height = 16 * cellSize;
+    canvas.height = 15 * cellSize;
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -298,16 +293,10 @@ export class FlyingGameClient {
     const state = this.state || {};
     const players = state.players || {};
 
-    // 绘制棋盘元素
     this.drawBoard(ctx);
     this.drawPieces(ctx, players);
-    this.drawDice(ctx);
-    this.drawInfoPanel(ctx, state);
   }
   
-  /**
-   * 绘制棋盘
-   */
   drawBoard(ctx) {
     const { cellSize, layout, colors } = this.boardConfig;
     const rows = layout.length;
@@ -334,285 +323,93 @@ export class FlyingGameClient {
     // 绘制格子
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
-        const cellType = layout[row][col];
+        const cellNum = layout[row][col];
         const x = col * cellSize;
         const y = row * cellSize;
-        const key = `${row},${col}`;
         
-        switch (cellType) {
-          case 0: // 空白
-            break;
-            
-          case 1: // 路径
-            ctx.fillStyle = "#fff";
-            ctx.strokeStyle = "#999";
-            ctx.lineWidth = 1;
-            ctx.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
-            ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
-            break;
-            
-          case 2: // 终点通道
-            ctx.fillStyle = "#ffe0b2";
-            ctx.strokeStyle = "#ff9800";
-            ctx.lineWidth = 2;
-            ctx.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
-            ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
-            break;
-            
-          case 3: // 基地
-            // 基地由颜色区域绘制
-            break;
-            
-          case 4: // 起飞点
-            ctx.fillStyle = "#e3f2fd";
-            ctx.strokeStyle = "#2196f3";
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            break;
-            
-          case 85: // 红色跳跃点
-            ctx.fillStyle = colors.red + '60';
-            ctx.strokeStyle = colors.red;
-            ctx.lineWidth = 3;
-            const redSize = cellSize * 0.35;
-            ctx.beginPath();
-            ctx.moveTo(x + cellSize / 2, y + cellSize / 2 - redSize);
-            ctx.lineTo(x + cellSize / 2 - redSize, y + cellSize / 2 + redSize);
-            ctx.lineTo(x + cellSize / 2 + redSize, y + cellSize / 2 + redSize);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('红', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 86: // 红色目标点
-            ctx.fillStyle = colors.red + '40';
-            ctx.strokeStyle = colors.red;
-            ctx.lineWidth = 3;
-            ctx.fillRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.strokeRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.fillStyle = colors.red;
-            ctx.font = 'bold 14px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('红', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 95: // 黄色跳跃点
-            ctx.fillStyle = colors.yellow + '60';
-            ctx.strokeStyle = colors.yellow;
-            ctx.lineWidth = 3;
-            const yellowSize = cellSize * 0.35;
-            ctx.beginPath();
-            ctx.moveTo(x + cellSize / 2, y + cellSize / 2 - yellowSize);
-            ctx.lineTo(x + cellSize / 2 - yellowSize, y + cellSize / 2 + yellowSize);
-            ctx.lineTo(x + cellSize / 2 + yellowSize, y + cellSize / 2 + yellowSize);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('黄', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 96: // 黄色目标点
-            ctx.fillStyle = colors.yellow + '40';
-            ctx.strokeStyle = colors.yellow;
-            ctx.lineWidth = 3;
-            ctx.fillRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.strokeRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.fillStyle = colors.yellow;
-            ctx.font = 'bold 14px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('黄', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 105: // 蓝色跳跃点
-            ctx.fillStyle = colors.blue + '60';
-            ctx.strokeStyle = colors.blue;
-            ctx.lineWidth = 3;
-            const blueSize = cellSize * 0.35;
-            ctx.beginPath();
-            ctx.moveTo(x + cellSize / 2, y + cellSize / 2 - blueSize);
-            ctx.lineTo(x + cellSize / 2 - blueSize, y + cellSize / 2 + blueSize);
-            ctx.lineTo(x + cellSize / 2 + blueSize, y + cellSize / 2 + blueSize);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('蓝', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 106: // 蓝色目标点
-            ctx.fillStyle = colors.blue + '40';
-            ctx.strokeStyle = colors.blue;
-            ctx.lineWidth = 3;
-            ctx.fillRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.strokeRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.fillStyle = colors.blue;
-            ctx.font = 'bold 14px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('蓝', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 115: // 绿色跳跃点
-            ctx.fillStyle = colors.green + '60';
-            ctx.strokeStyle = colors.green;
-            ctx.lineWidth = 3;
-            const greenSize = cellSize * 0.35;
-            ctx.beginPath();
-            ctx.moveTo(x + cellSize / 2, y + cellSize / 2 - greenSize);
-            ctx.lineTo(x + cellSize / 2 - greenSize, y + cellSize / 2 + greenSize);
-            ctx.lineTo(x + cellSize / 2 + greenSize, y + cellSize / 2 + greenSize);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('绿', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 116: // 绿色目标点
-            ctx.fillStyle = colors.green + '40';
-            ctx.strokeStyle = colors.green;
-            ctx.lineWidth = 3;
-            ctx.fillRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.strokeRect(x + 5, y + 5, cellSize - 10, cellSize - 10);
-            ctx.fillStyle = colors.green;
-            ctx.font = 'bold 14px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('绿', x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 8: // 红色终点
-            ctx.fillStyle = colors.red + "80";
-            ctx.strokeStyle = colors.red;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = "#fff";
-            ctx.font = "bold 20px Arial";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText("红", x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 9: // 黄色终点
-            ctx.fillStyle = colors.yellow + "80";
-            ctx.strokeStyle = colors.yellow;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = "#fff";
-            ctx.font = "bold 20px Arial";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText("黄", x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 10: // 蓝色终点
-            ctx.fillStyle = colors.blue + "80";
-            ctx.strokeStyle = colors.blue;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = "#fff";
-            ctx.font = "bold 20px Arial";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText("蓝", x + cellSize / 2, y + cellSize / 2);
-            break;
-            
-          case 11: // 绿色终点
-            ctx.fillStyle = colors.green + "80";
-            ctx.strokeStyle = colors.green;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = "#fff";
-            ctx.font = "bold 20px Arial";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText("绿", x + cellSize / 2, y + cellSize / 2);
-            break;
+        if (cellNum === 0) {
+          // 空白格子
+          continue;
+        } else if (cellNum >= 1 && cellNum <= 52) {
+          // 主路径（001-052）
+          const cellColor = this.mainPathColors[cellNum];
+          ctx.fillStyle = colors[cellColor] + "30";
+          ctx.strokeStyle = colors[cellColor];
+          ctx.lineWidth = 2;
+          ctx.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+          ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+        } else if (cellNum >= 100 && cellNum < 200) {
+          // 黄色区域
+          this.drawColorCell(ctx, x, y, cellSize, cellNum, "yellow");
+        } else if (cellNum >= 200 && cellNum < 300) {
+          // 蓝色区域
+          this.drawColorCell(ctx, x, y, cellSize, cellNum, "blue");
+        } else if (cellNum >= 300 && cellNum < 400) {
+          // 红色区域
+          this.drawColorCell(ctx, x, y, cellSize, cellNum, "red");
+        } else if (cellNum >= 400 && cellNum < 500) {
+          // 绿色区域
+          this.drawColorCell(ctx, x, y, cellSize, cellNum, "green");
+        } else if (cellNum === 555) {
+          // 中心区域
+          ctx.fillStyle = "#f0f0f0";
+          ctx.fillRect(x, y, cellSize, cellSize);
         }
       }
     }
-    
-    // 绘制基地区域
-    this.drawBases(ctx);
   }
   
-  /**
-   * 绘制基地
-   */
-  drawBases(ctx) {
-    const { cellSize, colors } = this.boardConfig;
-    const board = this.state?.board;
-    if (!board || !board.basePositions) return;
+  drawColorCell(ctx, x, y, cellSize, cellNum, color) {
+    const { colors } = this.boardConfig;
+    const colorHex = colors[color];
     
-    Object.entries(board.basePositions).forEach(([color, coords]) => {
-      if (coords.length === 0) return;
-      
-      // 找到基地的边界
-      let minRow = Infinity, maxRow = -Infinity;
-      let minCol = Infinity, maxCol = -Infinity;
-      
-      coords.forEach(coord => {
-        minRow = Math.min(minRow, coord[0]);
-        maxRow = Math.max(maxRow, coord[0]);
-        minCol = Math.min(minCol, coord[1]);
-        maxCol = Math.max(maxCol, coord[1]);
-      });
-      
-      const colorHex = colors[color] || "#ccc";
+    if (cellNum % 100 === 0) {
+      // 基地（x00）
       ctx.fillStyle = colorHex + "20";
       ctx.strokeStyle = colorHex;
       ctx.lineWidth = 3;
+      ctx.fillRect(x, y, cellSize, cellSize);
+      ctx.strokeRect(x, y, cellSize, cellSize);
+    } else if (cellNum % 100 === 1) {
+      // 起飞点（x01）
+      ctx.fillStyle = colorHex + "40";
+      ctx.strokeStyle = colorHex;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
       
-      ctx.fillRect(
-        minCol * cellSize,
-        minRow * cellSize,
-        (maxCol - minCol + 1) * cellSize,
-        (maxRow - minRow + 1) * cellSize
-      );
-      ctx.strokeRect(
-        minCol * cellSize,
-        minRow * cellSize,
-        (maxCol - minCol + 1) * cellSize,
-        (maxRow - minRow + 1) * cellSize
-      );
-    });
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 14px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("起", x + cellSize / 2, y + cellSize / 2);
+    } else if (cellNum % 100 >= 10 && cellNum % 100 <= 50) {
+      // 终点通道（x10-x50）
+      ctx.fillStyle = colorHex + "50";
+      ctx.strokeStyle = colorHex;
+      ctx.lineWidth = 2;
+      ctx.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+      ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+    } else if (cellNum === 111 || cellNum === 222 || cellNum === 333 || cellNum === 444) {
+      // 终点
+      ctx.fillStyle = colorHex;
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 18px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("终", x + cellSize / 2, y + cellSize / 2);
+    }
   }
   
-  /**
-   * 绘制棋子
-   */
   drawPieces(ctx, players) {
     const { cellSize, colors } = this.boardConfig;
     const areas = this.computeHitAreas();
@@ -626,7 +423,6 @@ export class FlyingGameClient {
       ctx.save();
       ctx.translate(hArea.x, hArea.y);
       
-      // 绘制棋子主体
       ctx.fillStyle = color;
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 3;
@@ -636,7 +432,7 @@ export class FlyingGameClient {
       ctx.fill();
       ctx.stroke();
       
-      // 如果是当前玩家且可以移动，高亮显示
+      // 高亮可移动的棋子
       if (this.state?.phase === GAME_PHASE.SELECTING_PLANE && 
           this.state?.dice &&
           this.state?.canMovePlanes &&
@@ -651,124 +447,29 @@ export class FlyingGameClient {
       
       ctx.restore();
     });
-  }
-  
-  /**
-   * 绘制骰子
-   */
-  drawDice(ctx) {
-    const w = this.canvas.width;
-    const diceX = w - 80;
-    const diceY = 80;
-    const diceSize = 60;
     
-    ctx.save();
-    ctx.translate(diceX, diceY);
-    
-    if (this.diceAnimation.isAnimating) {
-      ctx.rotate((this.diceAnimation.rotation * Math.PI) / 180);
-    }
-    
-    // 绘制骰子背景
-    ctx.fillStyle = "#fff";
-    ctx.strokeStyle = "#333";
-    ctx.lineWidth = 3;
-    ctx.shadowColor = "rgba(0,0,0,0.3)";
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetX = 3;
-    ctx.shadowOffsetY = 3;
-    
-    const radius = 8;
-    ctx.beginPath();
-    ctx.roundRect(-diceSize / 2, -diceSize / 2, diceSize, diceSize, radius);
-    ctx.fill();
-    ctx.stroke();
-    
-    ctx.shadowColor = "transparent";
-    
-    // 显示点数
-    const displayValue = this.diceAnimation.isAnimating 
-      ? (this.diceAnimation.currentValue || "?")
-      : (this.state?.dice || "?");
-    
-    if (displayValue !== "?") {
-      ctx.fillStyle = "#d32f2f";
-      ctx.font = "bold 36px Arial";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(displayValue, 0, 0);
-    } else {
-      ctx.fillStyle = "#999";
-      ctx.font = "24px Arial";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("?", 0, 0);
-    }
-    
-    ctx.restore();
-  }
-  
-  /**
-   * 绘制信息面板
-   */
-  drawInfoPanel(ctx, state) {
-    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-    ctx.fillRect(10, 10, 220, 140);
-    ctx.strokeStyle = "#333";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(10, 10, 220, 140);
-    
-    ctx.fillStyle = "#333";
-    ctx.font = "16px Microsoft YaHei";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    
-    let y = 25;
-    
-    // 游戏标题
-    ctx.font = "bold 18px Microsoft YaHei";
-    ctx.fillText("🎲 飞行棋", 20, y);
-    y += 30;
-    
-    ctx.font = "14px Microsoft YaHei";
-    
-    // 当前回合
-    if (state.turn) {
-      const colorNames = {
-        red: "红方",
-        yellow: "黄方",
-        blue: "蓝方",
-        green: "绿方",
-      };
-      const colors = this.boardConfig.colors;
-      ctx.fillStyle = colors[state.turn] || "#333";
-      ctx.fillText(`当前回合: ${colorNames[state.turn] || state.turn}`, 20, y);
-      y += 25;
-    }
-    
-    // 游戏状态
-    ctx.fillStyle = "#333";
-    const phaseNames = {
-      [GAME_PHASE.WAITING_DICE]: "等待掷骰",
-      [GAME_PHASE.SELECTING_PLANE]: "选择飞机",
-      [GAME_PHASE.MOVING]: "移动中",
-      [GAME_PHASE.GAME_OVER]: "游戏结束",
-    };
-    const phaseText = phaseNames[state.phase] || state.phase || "等待中";
-    ctx.fillText(`状态: ${phaseText}`, 20, y);
-    y += 25;
-    
-    // 连续6的次数
-    if (state.consecutiveSixCount > 0) {
-      ctx.fillStyle = "#f44336";
-      ctx.fillText(`连续6: ${state.consecutiveSixCount}次`, 20, y);
-      y += 25;
-    }
-    
-    // 游戏开始状态
-    if (!state.gameStarted) {
-      ctx.fillStyle = "#ff9800";
-      ctx.fillText("等待玩家加入...", 20, y);
-    }
+    // 绘制已完成的棋子
+    Object.values(players).forEach((player) => {
+      player.pieces.forEach((piece, idx) => {
+        if (piece.position === "finished" && piece.row >= 0 && piece.col >= 0) {
+          const x = piece.col * cellSize + cellSize / 2;
+          const y = piece.row * cellSize + cellSize / 2;
+          
+          ctx.save();
+          ctx.translate(x, y);
+          
+          ctx.fillStyle = colors[player.color] || "#666";
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 2;
+          
+          ctx.beginPath();
+          ctx.arc(0, 0, cellSize * 0.25, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          
+          ctx.restore();
+        }
+      });
+    });
   }
 }
