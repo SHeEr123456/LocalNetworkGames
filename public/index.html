@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>局域网游戏对战</title>
+  <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎮 局域网游戏对战</h1>
+      <p>中国象棋 · 坦克大战 · 飞行棋 — 同一局域网即时对战</p>
+    </div>
+
+    <div class="connection-panel" id="connectionPanel">
+      <h3>连接设置</h3>
+      <div class="input-group">
+        <input
+          type="text"
+          id="serverAddress"
+          placeholder="服务器地址 (例如: 192.168.1.100:3000)"
+          value="localhost:3000"
+        />
+        <button class="btn btn-primary" id="connectBtn">连接服务器</button>
+      </div>
+      <div class="input-group">
+        <select id="gameSelect" class="select">
+          <option value="chess">中国象棋</option>
+          <option value="tank">坦克大战</option>
+          <option value="flying">飞行棋</option>
+        </select>
+        <select id="playerCountSelect" class="select">
+          <option value="2">2 人</option>
+          <option value="3">3 人</option>
+          <option value="4">4 人</option>
+        </select>
+        <button class="btn btn-secondary" id="createRoomBtn">创建新房间</button>
+        <button class="btn btn-secondary" id="refreshRoomBtn">刷新房间列表</button>
+      </div>
+
+      <div id="roomListContainer" style="display: none;">
+        <h4>可用房间:</h4>
+        <div class="room-list" id="roomList"></div>
+      </div>
+
+      <div class="status-box" id="connectionStatus">等待连接服务器...</div>
+    </div>
+
+    <div class="game-container" style="display: none;" id="gameContainer">
+      <div class="board-section">
+        <div id="chessboard">
+          <div class="river">楚河 汉界</div>
+        </div>
+
+        <div id="tankContainer" style="display:none;">
+          <canvas id="tankCanvas" width="800" height="600"></canvas>
+          <div class="tank-hint">WASD移动，J射击</div>
+        </div>
+
+        <div id="flyingContainer" style="display:none;">
+          <canvas id="flyingCanvas" width="750" height="800"></canvas>
+          <div class="flying-hint">
+            <strong>游戏规则：</strong>点击「掷骰子」掷骰，然后点击高亮棋子移动。
+            <br>6点可起飞或额外行动 | 连续3次6点本轮作废 | 同格叠子受保护
+            <br><strong>特殊格子：</strong>起飞点 | 彩色三角=跳跃点 | 彩色框=跳跃目标 | 彩色圆=终点
+          </div>
+        </div>
+
+        <div class="controls">
+          <button class="btn btn-success" id="restartBtn">重新开始</button>
+          <button class="btn" id="surrenderBtn">认输</button>
+          <button class="btn" id="toggleSoundBtn">音效: 开</button>
+          <button class="btn" id="rollDiceBtn" style="display:none;">掷骰子</button>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <div class="info-card" id="playerInfo">
+          <h3>玩家信息</h3>
+          <div>你的颜色: <span id="playerColor" class="bold">未连接</span></div>
+          <div>当前回合: <span id="currentTurn" class="bold">等待开始</span></div>
+          <div>房间号: <span id="roomId" class="bold">-</span></div>
+        </div>
+
+        <div class="info-card">
+          <h3>聊天室</h3>
+          <div id="chatMessages"></div>
+          <div class="chat-input">
+            <input type="text" id="chatInput" placeholder="输入消息..." />
+            <button class="btn btn-primary" id="sendChatBtn">发送</button>
+          </div>
+        </div>
+
+        <div class="info-card">
+          <h3>棋谱记录</h3>
+          <div id="moveHistory"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="instructions">
+      <h4>使用说明：</h4>
+      <ul>
+        <li><strong>第一步：启动服务器</strong> - 在一台电脑上运行 <code>npm start</code></li>
+        <li><strong>第二步：创建房间</strong> - 房主点击“创建新房间”</li>
+        <li><strong>第三步：加入房间</strong> - 另一台电脑输入服务器地址，刷新房间列表并加入</li>
+        <li><strong>注意：</strong> 确保所有设备在同一局域网内，防火墙允许 3000 端口</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 入口：把逻辑拆到 public/js 下，便于维护 -->
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
+
