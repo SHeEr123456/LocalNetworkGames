@@ -74,12 +74,13 @@
           <canvas id="monopolyCanvas" width="900" height="720"></canvas>
           <div class="monopoly-actions">
             <button class="btn btn-success" id="monopolyBuyBtn" style="display:none;">购买地产</button>
-            <button class="btn" id="monopolySkipBtn" style="display:none;">跳过</button>
+            <button class="btn" id="monopolySkipBtn" style="display:none;">跳过购买</button>
+            <button class="btn btn-primary" id="monopolyEndBuildBtn" style="display:none;">结束盖房</button>
           </div>
           <div class="monopoly-hint">
-            <strong>环球之旅 · 大富翁：</strong>掷骰绕行长方形棋盘，买地收租，抽机会卡。
-            <br>经过起点领 $200 | 租金约为地价 1/5 | 破产出局，最后存活者获胜
-            <br>2–4 人，至少 2 人开局 | 轮到你时点「掷骰子」，可买地时点「购买」或「跳过」
+            <strong>环球之旅 · 大富翁：</strong>透视棋盘，立体棋子；集齐同色地产可盖房（最多 4 屋→旅馆）。
+            <br>经过起点领 $200 | 齐色空地租金×2 | 房屋递增租金 | 欠债会先自动卖屋
+            <br>掷骰前/盖房阶段可点击高亮地产升级 | 均匀建造（同组先补矮的）| 2–4 人热座或联网
           </div>
         </div>
 

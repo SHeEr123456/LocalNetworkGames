@@ -40,6 +40,7 @@ const app = new OnlineGameApp({
     monopolyCanvas: document.getElementById("monopolyCanvas"),
     monopolyBuyBtn: document.getElementById("monopolyBuyBtn"),
     monopolySkipBtn: document.getElementById("monopolySkipBtn"),
+    monopolyEndBuildBtn: document.getElementById("monopolyEndBuildBtn"),
   },
 });
 

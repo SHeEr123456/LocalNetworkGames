@@ -1,12 +1,13 @@
 /**
  * 大富翁（环球之旅风格）— 服务端权威逻辑
- * 长方形环绕棋盘：掷骰 → 落地买地/交租/机会卡，最后存活者获胜
+ * 掷骰 → 买地/交租/机会卡 → 齐色组可盖房升级（最多 4 屋 + 旅馆）
  */
 
 const GAME_PHASE = {
   WAITING_PLAYERS: "WAITING_PLAYERS",
-  WAITING_DICE: "WAITING_DICE",
-  DECISION: "DECISION", // 可买地：买或跳过
+  WAITING_DICE: "WAITING_DICE", // 可掷骰，也可先盖房
+  DECISION: "DECISION", // 买地：买或跳过
+  BUILD: "BUILD", // 落地自家地 / 齐色后：升级或结束
   GAME_OVER: "GAME_OVER",
 };
 
@@ -21,8 +22,9 @@ const COLOR_NAMES = {
 const START_MONEY = 1500;
 const SALARY = 200;
 const JAIL_FINE = 50;
+const MAX_BUILDINGS = 5; // 4 屋 + 1 旅馆
 
-/** 28 格环绕棋盘（台湾之旅 / 法国之旅式） */
+/** 28 格环绕棋盘 */
 const BOARD_SQUARES = [
   { id: 0, name: "起点", type: "start" },
   { id: 1, name: "北京", type: "property", price: 100, colorGroup: "a" },
@@ -64,11 +66,72 @@ const CHANCE_CARDS = [
   { text: "后退 2 格", move: -2 },
   { text: "去坐牢！", goToJail: true },
   { text: "路费返还，获得 $50", money: 50 },
-  { text: "房屋维修，支付 $100", money: -100 },
+  { text: "房屋维修：每屋 $25、旅馆 $100", repair: true },
 ];
 
-function rentOf(price) {
-  return Math.max(20, Math.floor(price / 5));
+function houseCostOf(square) {
+  return Math.max(50, Math.floor((square.price || 100) / 2));
+}
+
+function groupSquares(state, colorGroup) {
+  return state.board.filter((s) => s.type === "property" && s.colorGroup === colorGroup);
+}
+
+function ownsFullGroup(state, playerId, colorGroup) {
+  const squares = groupSquares(state, colorGroup);
+  if (!squares.length) return false;
+  return squares.every((s) => state.owners[String(s.id)] === playerId);
+}
+
+function buildingLevel(state, squareId) {
+  return Number(state.buildings[String(squareId)] || 0);
+}
+
+/** 租金：空地齐色翻倍；1–4 屋 / 旅馆递增 */
+function rentOf(state, square) {
+  const base = Math.max(20, Math.floor(square.price / 5));
+  const level = buildingLevel(state, square.id);
+  const mult = [1, 2.5, 5, 8, 12, 18];
+  let rent = Math.floor(base * (mult[level] || 1));
+  if (level === 0) {
+    const ownerId = state.owners[String(square.id)];
+    if (ownerId && ownsFullGroup(state, ownerId, square.colorGroup)) {
+      rent *= 2;
+    }
+  }
+  return Math.max(base, rent);
+}
+
+function canUpgradeSquare(state, player, squareId) {
+  const square = state.board[squareId];
+  if (!square || square.type !== "property") return { ok: false, error: "不是地产" };
+  if (state.owners[String(square.id)] !== player.id) {
+    return { ok: false, error: "不是你的地产" };
+  }
+  if (!ownsFullGroup(state, player.id, square.colorGroup)) {
+    return { ok: false, error: "需集齐同色地产才能盖房" };
+  }
+  const level = buildingLevel(state, square.id);
+  if (level >= MAX_BUILDINGS) return { ok: false, error: "已是旅馆，无法再升" };
+
+  const group = groupSquares(state, square.colorGroup);
+  const levels = group.map((s) => buildingLevel(state, s.id));
+  const minLevel = Math.min(...levels);
+  // 均匀建造：只能给当前最少层数的地产升级
+  if (level > minLevel) {
+    return { ok: false, error: "请先给同组其他地产升级（均匀建造）" };
+  }
+
+  const cost = houseCostOf(square);
+  if (player.money < cost) return { ok: false, error: `现金不足（需 $${cost}）` };
+  return { ok: true, cost, nextLevel: level + 1, square };
+}
+
+function listUpgradeable(state, player) {
+  return state.board
+    .filter((s) => s.type === "property")
+    .filter((s) => canUpgradeSquare(state, player, s.id).ok)
+    .map((s) => s.id);
 }
 
 function createMonopolyState(maxPlayers = 4) {
@@ -83,12 +146,14 @@ function createMonopolyState(maxPlayers = 4) {
     phase: GAME_PHASE.WAITING_PLAYERS,
     turn: null,
     lastAction: "等待玩家加入（至少 2 人开始）",
-    pendingSquare: null, // 待决策的地产格 id
+    pendingSquare: null,
+    upgradeable: [],
     gameOver: false,
     winner: null,
     gameStarted: false,
     board: BOARD_SQUARES,
-    owners: {}, // squareId -> clientId
+    owners: {},
+    buildings: {}, // squareId -> 0..5
   };
 }
 
@@ -130,8 +195,10 @@ function startMonopolyGame(state) {
   state.gameStarted = true;
   state.phase = GAME_PHASE.WAITING_DICE;
   state.owners = {};
+  state.buildings = {};
   state.dice = null;
   state.pendingSquare = null;
+  state.upgradeable = [];
   state.gameOver = false;
   state.winner = null;
 
@@ -146,7 +213,8 @@ function startMonopolyGame(state) {
 
   const first = state.players[state.order[0]];
   state.turn = first.color;
-  state.lastAction = `游戏开始！${COLOR_NAMES[first.color]} 先手`;
+  state.upgradeable = listUpgradeable(state, first);
+  state.lastAction = `游戏开始！${COLOR_NAMES[first.color]} 先手（齐色可盖房）`;
 }
 
 function applyMonopolyAction(room, clientId, data) {
@@ -158,7 +226,6 @@ function applyMonopolyAction(room, clientId, data) {
   if (!state.gameStarted) return { ok: false, error: "游戏尚未开始（至少 2 人）" };
 
   const currentPlayerId = state.order[state.currentIndex];
-  // 本地热座：同一连接可代替当前回合玩家行动
   const actingId = room.localMultiplayer ? currentPlayerId : clientId;
   if (currentPlayerId !== actingId) {
     return { ok: false, error: "还没轮到你" };
@@ -172,6 +239,8 @@ function applyMonopolyAction(room, clientId, data) {
   if (data.action === "roll") return handleRoll(state, player);
   if (data.action === "buy") return handleBuy(state, player);
   if (data.action === "skip") return handleSkipBuy(state, player);
+  if (data.action === "upgrade") return handleUpgrade(state, player, data);
+  if (data.action === "end_build") return handleEndBuild(state, player);
 
   return { ok: false, error: "未知操作" };
 }
@@ -185,7 +254,6 @@ function handleRoll(state, player) {
     return { ok: false, error: "当前不能掷骰子" };
   }
 
-  // 出狱：付罚款或跳过一轮（已在 skipTurns 处理）
   if (player.inJail) {
     if (player.skipTurns > 0) {
       player.skipTurns -= 1;
@@ -198,27 +266,30 @@ function handleRoll(state, player) {
       advanceTurn(state);
       return payload(state);
     }
-    // 付罚款出狱再掷骰
     if (player.money < JAIL_FINE) {
-      bankruptPlayer(state, player, null);
-      if (checkWin(state)) return payload(state);
-      advanceTurn(state);
-      return payload(state);
+      const paid = liquidateToPay(state, player, JAIL_FINE, null);
+      if (!paid) {
+        bankruptPlayer(state, player, null);
+        if (checkWin(state)) return payload(state);
+        advanceTurn(state);
+        return payload(state);
+      }
+    } else {
+      player.money -= JAIL_FINE;
     }
-    player.money -= JAIL_FINE;
     player.inJail = false;
     state.lastAction = `${COLOR_NAMES[player.color]} 支付 $${JAIL_FINE} 出狱`;
   }
 
   const dice = Math.floor(Math.random() * 6) + 1;
   state.dice = dice;
+  state.upgradeable = [];
 
   const boardLen = state.board.length;
   const from = player.position;
-  let to = (from + dice) % boardLen;
-  let passedGo = from + dice >= boardLen;
+  const passedGo = from + dice >= boardLen;
+  player.position = (from + dice) % boardLen;
 
-  player.position = to;
   if (passedGo) {
     player.money += SALARY;
     state.lastAction = `${COLOR_NAMES[player.color]} 掷出 ${dice}，经过起点领取 $${SALARY}`;
@@ -235,20 +306,17 @@ function resolveLanding(state, player) {
 
   if (square.type === "start") {
     state.lastAction += `，停在起点`;
-    endTurnAfterResolve(state);
-    return payload(state);
+    return finishOrOfferBuild(state, player);
   }
 
   if (square.type === "jail") {
     state.lastAction += `，路过监狱`;
-    endTurnAfterResolve(state);
-    return payload(state);
+    return finishOrOfferBuild(state, player);
   }
 
   if (square.type === "parking") {
     state.lastAction += `，免费停车休息`;
-    endTurnAfterResolve(state);
-    return payload(state);
+    return finishOrOfferBuild(state, player);
   }
 
   if (square.type === "goto_jail") {
@@ -265,8 +333,7 @@ function resolveLanding(state, player) {
     state.lastAction += `，缴纳${name} $${amount}`;
     const ok = takeMoney(state, player, amount, null);
     if (!ok && checkWin(state)) return payload(state);
-    endTurnAfterResolve(state);
-    return payload(state);
+    return finishOrOfferBuild(state, player);
   }
 
   if (square.type === "chance") {
@@ -279,41 +346,48 @@ function resolveLanding(state, player) {
       if (player.money >= square.price) {
         state.phase = GAME_PHASE.DECISION;
         state.pendingSquare = square.id;
+        state.upgradeable = [];
         state.lastAction += `，到达「${name}」（$${square.price}），可购买或跳过`;
         return payload(state);
       }
       state.lastAction += `，到达「${name}」，现金不足无法购买`;
-      endTurnAfterResolve(state);
-      return payload(state);
+      return finishOrOfferBuild(state, player);
     }
     if (ownerId === player.id) {
       state.lastAction += `，到达自己的「${name}」`;
-      endTurnAfterResolve(state);
-      return payload(state);
+      // 自家地：优先提示升级
+      const can = canUpgradeSquare(state, player, square.id);
+      if (can.ok) {
+        state.phase = GAME_PHASE.BUILD;
+        state.pendingSquare = square.id;
+        state.upgradeable = listUpgradeable(state, player);
+        state.lastAction += `，可盖房升级（$${can.cost}）或结束回合`;
+        return payload(state);
+      }
+      return finishOrOfferBuild(state, player);
     }
     const owner = state.players[ownerId];
     if (!owner || owner.bankrupt) {
-      // 业主已破产，地产归银行，可买
       delete state.owners[String(square.id)];
+      state.buildings[String(square.id)] = 0;
       if (player.money >= square.price) {
         state.phase = GAME_PHASE.DECISION;
         state.pendingSquare = square.id;
         state.lastAction += `，到达「${name}」，可购买`;
         return payload(state);
       }
-      endTurnAfterResolve(state);
-      return payload(state);
+      return finishOrOfferBuild(state, player);
     }
-    const rent = rentOf(square.price);
-    state.lastAction += `，到达「${name}」，向${COLOR_NAMES[owner.color]}支付租金 $${rent}`;
+    const rent = rentOf(state, square);
+    const lvl = buildingLevel(state, square.id);
+    const lvlText = lvl >= 5 ? "旅馆" : lvl > 0 ? `${lvl} 栋屋` : "空地";
+    state.lastAction += `，到达「${name}」（${lvlText}），向${COLOR_NAMES[owner.color]}支付租金 $${rent}`;
     const ok = takeMoney(state, player, rent, owner);
     if (!ok && checkWin(state)) return payload(state);
-    endTurnAfterResolve(state);
-    return payload(state);
+    return finishOrOfferBuild(state, player);
   }
 
-  endTurnAfterResolve(state);
-  return payload(state);
+  return finishOrOfferBuild(state, player);
 }
 
 function applyChance(state, player) {
@@ -328,6 +402,24 @@ function applyChance(state, player) {
     return payload(state);
   }
 
+  if (card.repair) {
+    let fee = 0;
+    for (const [sqId, ownerId] of Object.entries(state.owners)) {
+      if (ownerId !== player.id) continue;
+      const lvl = buildingLevel(state, sqId);
+      if (lvl >= 5) fee += 100;
+      else fee += lvl * 25;
+    }
+    if (fee > 0) {
+      state.lastAction += `，维修费 $${fee}`;
+      const ok = takeMoney(state, player, fee, null);
+      if (!ok && checkWin(state)) return payload(state);
+    } else {
+      state.lastAction += `，无需维修`;
+    }
+    return finishOrOfferBuild(state, player);
+  }
+
   if (typeof card.goTo === "number") {
     const from = player.position;
     player.position = card.goTo;
@@ -335,10 +427,8 @@ function applyChance(state, player) {
       player.money += SALARY;
       state.lastAction += `，领取工资 $${SALARY}`;
     }
-    // 若落到地产等，继续结算（避免无限递归机会卡：落地后再 resolve，但 chance 再抽会叠）
     if (card.goTo === 0) {
-      endTurnAfterResolve(state);
-      return payload(state);
+      return finishOrOfferBuild(state, player);
     }
     return resolveLanding(state, player);
   }
@@ -365,8 +455,7 @@ function applyChance(state, player) {
     }
   }
 
-  endTurnAfterResolve(state);
-  return payload(state);
+  return finishOrOfferBuild(state, player);
 }
 
 function handleBuy(state, player) {
@@ -386,10 +475,14 @@ function handleBuy(state, player) {
 
   player.money -= square.price;
   state.owners[String(square.id)] = player.id;
+  state.buildings[String(square.id)] = 0;
   state.lastAction = `${COLOR_NAMES[player.color]} 购买了「${square.name}」（$${square.price}）`;
   state.pendingSquare = null;
-  endTurnAfterResolve(state);
-  return payload(state);
+
+  if (ownsFullGroup(state, player.id, square.colorGroup)) {
+    state.lastAction += `，集齐「${square.colorGroup.toUpperCase()}」色组！`;
+  }
+  return finishOrOfferBuild(state, player);
 }
 
 function handleSkipBuy(state, player) {
@@ -399,17 +492,102 @@ function handleSkipBuy(state, player) {
   const square = state.board[state.pendingSquare];
   state.lastAction = `${COLOR_NAMES[player.color]} 放弃购买「${square?.name || "地产"}」`;
   state.pendingSquare = null;
+  return finishOrOfferBuild(state, player);
+}
+
+function handleUpgrade(state, player, data) {
+  if (state.phase !== GAME_PHASE.WAITING_DICE && state.phase !== GAME_PHASE.BUILD) {
+    return { ok: false, error: "当前不能盖房" };
+  }
+  if (player.inJail) return { ok: false, error: "在监狱中不能盖房" };
+
+  const squareId = Number(data.squareId);
+  const check = canUpgradeSquare(state, player, squareId);
+  if (!check.ok) return { ok: false, error: check.error };
+
+  player.money -= check.cost;
+  state.buildings[String(squareId)] = check.nextLevel;
+  const label = check.nextLevel >= 5 ? "旅馆" : `${check.nextLevel} 栋房屋`;
+  state.lastAction = `${COLOR_NAMES[player.color]} 升级「${check.square.name}」→ ${label}（-$${check.cost}）`;
+
+  state.upgradeable = listUpgradeable(state, player);
+  state.pendingSquare = null;
+
+  // BUILD 阶段升完若不能再升，自动结束回合；WAITING_DICE 可继续盖或掷骰
+  if (state.phase === GAME_PHASE.BUILD && state.upgradeable.length === 0) {
+    endTurnAfterResolve(state);
+  } else if (state.phase === GAME_PHASE.BUILD) {
+    // 保持 BUILD，可继续或 end_build
+  } else {
+    state.phase = GAME_PHASE.WAITING_DICE;
+  }
+
+  return payload(state);
+}
+
+function handleEndBuild(state, player) {
+  if (state.phase !== GAME_PHASE.BUILD) {
+    return { ok: false, error: "当前不在盖房阶段" };
+  }
+  state.lastAction = `${COLOR_NAMES[player.color]} 结束盖房`;
   endTurnAfterResolve(state);
   return payload(state);
 }
 
-function takeMoney(state, player, amount, creditor) {
+/** 结算后：若还能盖房则进入 BUILD，否则换手 */
+function finishOrOfferBuild(state, player) {
+  if (state.gameOver) return payload(state);
+  if (player.bankrupt || player.inJail) {
+    endTurnAfterResolve(state);
+    return payload(state);
+  }
+  const ups = listUpgradeable(state, player);
+  if (ups.length > 0) {
+    state.phase = GAME_PHASE.BUILD;
+    state.pendingSquare = null;
+    state.upgradeable = ups;
+    state.dice = null;
+    state.lastAction += `；可盖房升级，或点「结束盖房」`;
+    return payload(state);
+  }
+  endTurnAfterResolve(state);
+  return payload(state);
+}
+
+/** 先卖屋换钱，不够再破产 */
+function liquidateToPay(state, player, amount, creditor) {
   if (player.money >= amount) {
     player.money -= amount;
     if (creditor && !creditor.bankrupt) creditor.money += amount;
     return true;
   }
-  // 破产：剩余钱给债主，地产转给债主或归银行
+  // 卖屋：从旅馆/高屋开始
+  const owned = Object.entries(state.owners)
+    .filter(([, oid]) => oid === player.id)
+    .map(([sqId]) => Number(sqId))
+    .sort((a, b) => buildingLevel(state, b) - buildingLevel(state, a));
+
+  for (const sqId of owned) {
+    while (buildingLevel(state, sqId) > 0 && player.money < amount) {
+      const square = state.board[sqId];
+      const refund = Math.floor(houseCostOf(square) / 2);
+      state.buildings[String(sqId)] = buildingLevel(state, sqId) - 1;
+      player.money += refund;
+      state.lastAction += `；变卖「${square.name}」建筑 +$${refund}`;
+    }
+    if (player.money >= amount) break;
+  }
+
+  if (player.money >= amount) {
+    player.money -= amount;
+    if (creditor && !creditor.bankrupt) creditor.money += amount;
+    return true;
+  }
+  return false;
+}
+
+function takeMoney(state, player, amount, creditor) {
+  if (liquidateToPay(state, player, amount, creditor)) return true;
   const left = player.money;
   player.money = 0;
   if (creditor && !creditor.bankrupt) creditor.money += left;
@@ -423,12 +601,13 @@ function bankruptPlayer(state, player, creditor) {
   state.lastAction += `；${COLOR_NAMES[player.color]} 破产出局！`;
 
   for (const [sqId, ownerId] of Object.entries(state.owners)) {
-    if (ownerId === player.id) {
-      if (creditor && !creditor.bankrupt) {
-        state.owners[sqId] = creditor.id;
-      } else {
-        delete state.owners[sqId];
-      }
+    if (ownerId !== player.id) continue;
+    // 建筑拆给银行（不转给债主）
+    state.buildings[sqId] = 0;
+    if (creditor && !creditor.bankrupt) {
+      state.owners[sqId] = creditor.id;
+    } else {
+      delete state.owners[sqId];
     }
   }
 }
@@ -456,7 +635,12 @@ function endTurnAfterResolve(state) {
   state.phase = GAME_PHASE.WAITING_DICE;
   state.dice = null;
   state.pendingSquare = null;
+  state.upgradeable = [];
   advanceTurn(state);
+  const cur = state.players[state.order[state.currentIndex]];
+  if (cur && !cur.bankrupt) {
+    state.upgradeable = listUpgradeable(state, cur);
+  }
 }
 
 function advanceTurn(state) {

@@ -57,6 +57,11 @@ export class OnlineGameApp {
     if (this.el.monopolySkipBtn) {
       this.el.monopolySkipBtn.addEventListener("click", () => this.sendMonopolyAction({ action: "skip" }));
     }
+    if (this.el.monopolyEndBuildBtn) {
+      this.el.monopolyEndBuildBtn.addEventListener("click", () =>
+        this.sendMonopolyAction({ action: "end_build" }),
+      );
+    }
 
     this.updateStatus("等待连接服务器...", "info");
   }
