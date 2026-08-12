@@ -208,12 +208,13 @@ export class FlyingGameClient {
     }
     
     const currentPlayerId = this.state.order?.[this.state.currentIndex];
-    if (currentPlayerId !== this.app.clientId) {
+    const actingId = this.app.getActingPlayerId?.() ?? this.app.clientId;
+    if (currentPlayerId !== actingId) {
       return;
     }
 
     const hits = this.computeHitAreas();
-    const myId = this.app.clientId;
+    const myId = actingId;
     let picked = null;
     hits.forEach((h) => {
       if (h.ownerId !== myId) return;
@@ -437,7 +438,7 @@ export class FlyingGameClient {
           this.state?.dice &&
           this.state?.canMovePlanes &&
           this.state.canMovePlanes.includes(hArea.pieceIndex) &&
-          hArea.ownerId === this.app.clientId) {
+          hArea.ownerId === (this.app.getActingPlayerId?.() ?? this.app.clientId)) {
         ctx.strokeStyle = "#ffd700";
         ctx.lineWidth = 4;
         ctx.beginPath();

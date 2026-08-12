@@ -15,6 +15,7 @@ const app = new OnlineGameApp({
     gameSelect: document.getElementById("gameSelect"),
     playerCountSelect: document.getElementById("playerCountSelect"),
     createRoomBtn: document.getElementById("createRoomBtn"),
+    localPlayBtn: document.getElementById("localPlayBtn"),
     refreshRoomBtn: document.getElementById("refreshRoomBtn"),
     roomListContainer: document.getElementById("roomListContainer"),
     roomList: document.getElementById("roomList"),
@@ -35,6 +36,10 @@ const app = new OnlineGameApp({
     tankCanvas: document.getElementById("tankCanvas"),
     flyingContainer: document.getElementById("flyingContainer"),
     flyingCanvas: document.getElementById("flyingCanvas"),
+    monopolyContainer: document.getElementById("monopolyContainer"),
+    monopolyCanvas: document.getElementById("monopolyCanvas"),
+    monopolyBuyBtn: document.getElementById("monopolyBuyBtn"),
+    monopolySkipBtn: document.getElementById("monopolySkipBtn"),
   },
 });
 

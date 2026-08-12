@@ -1,12 +1,13 @@
 /**
  * OnlineGameApp：联网对战的“壳”
  * - 负责 WebSocket 连接、房间创建/加入、聊天、通用 UI
- * - 根据房间的 gameType 选择具体游戏实现（象棋/坦克/飞行棋）
+ * - 根据房间的 gameType 选择具体游戏实现（象棋/坦克/飞行棋/大富翁）
  */
 
 import { ChessGameClient } from "../games/chess/ChessGameClient.js";
 import { TankGameClient } from "../games/tank/TankGameClient.js";
 import { FlyingGameClient } from "../games/flying/FlyingGameClient.js";
+import { MonopolyGameClient } from "../games/monopoly/MonopolyGameClient.js";
 
 export class OnlineGameApp {
   constructor({ el }) {
@@ -19,6 +20,7 @@ export class OnlineGameApp {
     this.roomId = null;
     this.playerColor = null; // chess: red/black, tank: red/blue
     this.gameType = "chess";
+    this.localMultiplayer = false;
 
     // 服务端下发的权威状态（不同 gameType 结构不同）
     this.gameState = null;
@@ -34,6 +36,9 @@ export class OnlineGameApp {
     // 绑定 UI 事件（替代旧版 inline onclick，避免全局污染）
     this.el.connectBtn.addEventListener("click", () => this.connectFromInput());
     this.el.createRoomBtn.addEventListener("click", () => this.createRoom());
+    if (this.el.localPlayBtn) {
+      this.el.localPlayBtn.addEventListener("click", () => this.createLocalRoom());
+    }
     this.el.refreshRoomBtn.addEventListener("click", () => this.refreshRoomList());
     this.el.sendChatBtn.addEventListener("click", () => this.sendChatFromInput());
     this.el.chatInput.addEventListener("keypress", (e) => {
@@ -45,6 +50,12 @@ export class OnlineGameApp {
 
     if (this.el.rollDiceBtn) {
       this.el.rollDiceBtn.addEventListener("click", () => this.rollDice());
+    }
+    if (this.el.monopolyBuyBtn) {
+      this.el.monopolyBuyBtn.addEventListener("click", () => this.sendMonopolyAction({ action: "buy" }));
+    }
+    if (this.el.monopolySkipBtn) {
+      this.el.monopolySkipBtn.addEventListener("click", () => this.sendMonopolyAction({ action: "skip" }));
     }
 
     this.updateStatus("等待连接服务器...", "info");
@@ -106,6 +117,7 @@ export class OnlineGameApp {
         this.playerColor = data.color;
         this.gameType = data.gameType || "chess";
         this.gameState = data.gameState;
+        this.localMultiplayer = !!data.localMultiplayer;
 
         this.enterGame();
         this.addChatMessage("系统", data.message || "进入房间", true);
@@ -151,6 +163,16 @@ export class OnlineGameApp {
         }
         break;
 
+      case "monopoly_state":
+        if (this.game && this.gameType === "monopoly") {
+          this.gameState = data.state || data.gameState || null;
+          if (this.gameState) {
+            this.game.onMonopolyState(this.gameState);
+            this.updatePlayerInfo();
+          }
+        }
+        break;
+
       case "game_restarted":
         this.gameState = data.gameState;
         if (this.game) this.game.onGameRestarted(data);
@@ -176,10 +198,12 @@ export class OnlineGameApp {
     this.el.chessboard.style.display = "none";
     this.el.tankContainer.style.display = "none";
     if (this.el.flyingContainer) this.el.flyingContainer.style.display = "none";
+    if (this.el.monopolyContainer) this.el.monopolyContainer.style.display = "none";
 
-    // 掷骰按钮：仅飞行棋显示
+    // 掷骰按钮：飞行棋 / 大富翁显示
     if (this.el.rollDiceBtn) {
-      this.el.rollDiceBtn.style.display = this.gameType === "flying" ? "inline-block" : "none";
+      this.el.rollDiceBtn.style.display =
+        this.gameType === "flying" || this.gameType === "monopoly" ? "inline-block" : "none";
     }
 
     if (this.gameType === "tank") {
@@ -193,6 +217,12 @@ export class OnlineGameApp {
       this.game = new FlyingGameClient({
         app: this,
         canvas: this.el.flyingCanvas,
+      });
+    } else if (this.gameType === "monopoly") {
+      if (this.el.monopolyContainer) this.el.monopolyContainer.style.display = "block";
+      this.game = new MonopolyGameClient({
+        app: this,
+        canvas: this.el.monopolyCanvas,
       });
     } else {
       this.el.chessboard.style.display = "block";
@@ -212,6 +242,7 @@ export class OnlineGameApp {
     this.playerColor = null;
     this.gameType = "chess";
     this.gameState = null;
+    this.localMultiplayer = false;
     if (this.game) this.game.destroy?.();
     this.game = null;
 
@@ -221,6 +252,7 @@ export class OnlineGameApp {
 
     if (this.el.rollDiceBtn) this.el.rollDiceBtn.style.display = "none";
     if (this.el.flyingContainer) this.el.flyingContainer.style.display = "none";
+    if (this.el.monopolyContainer) this.el.monopolyContainer.style.display = "none";
   }
 
   createRoom() {
@@ -231,6 +263,41 @@ export class OnlineGameApp {
       return;
     }
     this.updateStatus("正在创建房间...", "info");
+  }
+
+  createLocalRoom() {
+    const gameType = this.el.gameSelect?.value || "chess";
+    if (gameType === "tank") {
+      alert("坦克大战为实时对战，暂不支持同机热座。请改选象棋、飞行棋或大富翁。");
+      return;
+    }
+    const maxPlayers = Number(this.el.playerCountSelect?.value || 2);
+    if (
+      !this.send({
+        type: "create_room",
+        gameType,
+        maxPlayers,
+        localMultiplayer: true,
+      })
+    ) {
+      alert("请先连接到服务器");
+      return;
+    }
+    this.updateStatus("正在开启本地多人…", "info");
+  }
+
+  /** 热座模式下，当前应由谁操作（虚拟座位 id） */
+  getActingPlayerId() {
+    if (!this.localMultiplayer) return this.clientId;
+    const s = this.gameState;
+    if (s?.order && typeof s.currentIndex === "number") {
+      return s.order[s.currentIndex];
+    }
+    return this.clientId;
+  }
+
+  isHotseat() {
+    return !!this.localMultiplayer;
   }
 
   refreshRoomList() {
@@ -259,6 +326,10 @@ export class OnlineGameApp {
 
   sendFlyingAction(payload) {
     this.send({ type: "flying_action", ...payload });
+  }
+
+  sendMonopolyAction(payload) {
+    this.send({ type: "monopoly_action", ...payload });
   }
 
   sendChatFromInput() {
@@ -348,8 +419,15 @@ export class OnlineGameApp {
       yellow: "#d4b100",
     };
 
+    // 热座：操作方跟随当前回合
+    if (this.localMultiplayer && this.gameState?.turn) {
+      this.playerColor = this.gameState.turn;
+    }
+
     if (this.playerColor) {
-      const txt = colorMapText[this.playerColor] || this.playerColor;
+      const txt = this.localMultiplayer
+        ? `本地热座 · ${colorMapText[this.playerColor] || this.playerColor}`
+        : colorMapText[this.playerColor] || this.playerColor;
       const col = colorMapColor[this.playerColor] || "#000";
       this.el.playerColor.textContent = txt;
       this.el.playerColor.style.color = col;
@@ -363,7 +441,11 @@ export class OnlineGameApp {
       this.el.currentTurn.style.color = col;
     }
 
-    this.el.roomId.textContent = this.roomId || "-";
+    this.el.roomId.textContent = this.roomId
+      ? this.localMultiplayer
+        ? `${this.roomId}（本地）`
+        : this.roomId
+      : "-";
   }
 
   addChatMessage(sender, message, isSystem = false) {
@@ -406,7 +488,9 @@ export class OnlineGameApp {
           ? "坦克大战"
           : room.gameType === "flying"
             ? "飞行棋"
-            : "中国象棋";
+            : room.gameType === "monopoly"
+              ? "大富翁"
+              : "中国象棋";
       const maxPlayers = room.maxPlayers || 2;
       roomElement.innerHTML = `
         <div><strong>房间号:</strong> ${room.id}</div>
@@ -430,8 +514,11 @@ export class OnlineGameApp {
   }
 
   rollDice() {
-    if (this.gameType !== "flying") return;
-    this.sendFlyingAction({ action: "roll" });
+    if (this.gameType === "flying") {
+      this.sendFlyingAction({ action: "roll" });
+    } else if (this.gameType === "monopoly") {
+      this.sendMonopolyAction({ action: "roll" });
+    }
   }
 }
 

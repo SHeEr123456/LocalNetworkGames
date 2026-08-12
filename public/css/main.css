@@ -175,6 +175,13 @@ body::after {
   flex-wrap: wrap;
 }
 
+.local-play-hint {
+  margin: -6px 0 14px;
+  font-size: 13px;
+  color: #666;
+  line-height: 1.5;
+}
+
 .input-group input,
 .select {
   flex: 1;
@@ -479,9 +486,54 @@ body::after {
 }
 
 /* =========================================
-   信息卡片
+   大富翁棋盘
    ========================================= */
-.controls {
+#monopolyContainer {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+#monopolyCanvas {
+  width: 900px;
+  height: 720px;
+  border: 3px solid #8B4513;
+  background: #faf6e8;
+  display: block;
+  margin: 0 auto;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(139, 69, 19, 0.2);
+  max-width: 100%;
+}
+
+.monopoly-actions {
+  text-align: center;
+  margin-top: 12px;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.monopoly-hint {
+  text-align: center;
+  margin-top: 12px;
+  color: #555;
+  font-size: 13px;
+  padding: 14px;
+  background: linear-gradient(135deg, #e8f5e9, #fff8e1);
+  border-radius: var(--radius-sm);
+  line-height: 1.7;
+  border: 1px solid #c8e6c9;
+}
+
+.local-play-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #666;
+  line-height: 1.5;
+}
+
   margin-top: 60px;
   text-align: center;
   display: flex;
@@ -702,6 +754,11 @@ body::after {
   }
 
   #flyingCanvas {
+    width: 100%;
+    height: auto;
+  }
+
+  #monopolyCanvas {
     width: 100%;
     height: auto;
   }

@@ -189,11 +189,33 @@ export class ChessRules {
   static getAllValidMoves(board, row, col) {
     const piece = board[row][col];
     if (!piece) return [];
+    const movingColor = piece === piece.toUpperCase() ? "red" : "black";
+
+    // 模拟移动并检查走后是否会导致将帅面对面
+    function wouldFaceKingsAfterMove(fromR, fromC, toR, toC) {
+      const testBoard = board.map(r => [...r]);
+      testBoard[toR][toC] = testBoard[fromR][fromC];
+      testBoard[fromR][fromC] = null;
+      // 找到走子方的将/帅位置并检查面对面
+      const king = movingColor === "red" ? "K" : "k";
+      for (let kr = 0; kr < 10; kr++) {
+        for (let kc = 0; kc < 9; kc++) {
+          if (testBoard[kr][kc] === king) {
+            return ChessRules.isFacingKings(testBoard, kr, kc, movingColor === "red");
+          }
+        }
+      }
+      return false;
+    }
+
     const moves = [];
     for (let toRow = 0; toRow < 10; toRow++) {
       for (let toCol = 0; toCol < 9; toCol++) {
         const result = this.isValidMove(board, row, col, toRow, toCol);
-        if (result.valid) moves.push({ row: toRow, col: toCol, captures: result.captures });
+        if (!result.valid) continue;
+        // 非将/帅棋子移动后也要检查将帅面对面
+        if (piece.toLowerCase() !== "k" && wouldFaceKingsAfterMove(row, col, toRow, toCol)) continue;
+        moves.push({ row: toRow, col: toCol, captures: result.captures });
       }
     }
     return moves;

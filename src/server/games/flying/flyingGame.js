@@ -253,7 +253,8 @@ function createFlyingState(maxPlayers = 4) {
 /**
  * 确保玩家存在
  */
-function ensureFlyingPlayer(room, clientId) {
+function ensureFlyingPlayer(room, clientId, options = {}) {
+  const autoStart = options.autoStart !== false;
   const state = room.gameState;
   if (!state || state.gameType !== "flying") return;
   if (!state.players) state.players = {};
@@ -278,7 +279,7 @@ function ensureFlyingPlayer(room, clientId) {
   };
 
   // 至少2人即可开始游戏（无需满员）
-  if (state.order.length >= 2 && !state.gameStarted) {
+  if (autoStart && state.order.length >= 2 && !state.gameStarted) {
     startFlyingGame(state);
   }
 }
@@ -320,11 +321,12 @@ function applyFlyingAction(room, clientId, data) {
   }
 
   const currentPlayerId = state.order[state.currentIndex];
-  if (currentPlayerId !== clientId) {
+  const actingId = room.localMultiplayer ? currentPlayerId : clientId;
+  if (currentPlayerId !== actingId) {
     return { ok: false, error: "还没轮到你行动" };
   }
 
-  const player = state.players[clientId];
+  const player = state.players[actingId];
   if (!player) {
     return { ok: false, error: "玩家信息不存在" };
   }
@@ -678,4 +680,5 @@ module.exports = {
   createFlyingState,
   ensureFlyingPlayer,
   applyFlyingAction,
+  startFlyingGame,
 };

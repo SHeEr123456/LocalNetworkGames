@@ -15,7 +15,14 @@ const {
   createFlyingState,
   ensureFlyingPlayer,
   applyFlyingAction,
+  startFlyingGame,
 } = require("./games/flying/flyingGame");
+const {
+  createMonopolyState,
+  ensureMonopolyPlayer,
+  applyMonopolyAction,
+  startMonopolyGame,
+} = require("./games/monopoly/monopolyGame");
 
 /**
  * 服务器说明
@@ -34,8 +41,8 @@ class GameServer {
     this.clients = new Map(); // clientId -> { ws, roomId, color, clientId }
     this.rooms = new Map(); // roomId -> { id, clients:Set, gameType, gameState, turn, created }
 
-    // Tank tick（20 FPS）
-    this.tankTick = setInterval(() => this.updateTankRooms(), 50);
+    // Tank tick（60 FPS）
+    this.tankTick = setInterval(() => this.updateTankRooms(), 17);
 
     this.setupWebSocket();
   }
@@ -135,7 +142,9 @@ class GameServer {
 
     switch (data.type) {
       case "create_room":
-        this.createRoom(clientId, data.gameType || "chess", data.maxPlayers);
+        this.createRoom(clientId, data.gameType || "chess", data.maxPlayers, {
+          localMultiplayer: !!data.localMultiplayer,
+        });
         break;
       case "join_room":
         this.joinRoom(clientId, data.roomId);
@@ -149,6 +158,9 @@ class GameServer {
       case "flying_action":
         this.handleFlyingAction(clientId, data);
         break;
+      case "monopoly_action":
+        this.handleMonopolyAction(clientId, data);
+        break;
       case "chat":
         this.handleChat(clientId, data);
         break;
@@ -161,36 +173,67 @@ class GameServer {
     }
   }
 
-  createRoom(clientId, gameType = "chess", maxPlayers) {
+  createRoom(clientId, gameType = "chess", maxPlayers, options = {}) {
     const client = this.clients.get(clientId);
     if (!client) return;
     if (client.roomId) this.leaveRoom(clientId);
 
-    const normalizedMaxPlayers =
-      gameType === "flying" ? Math.max(2, Math.min(4, Number(maxPlayers) || 4)) : 2;
+    const localMultiplayer = !!options.localMultiplayer;
+    if (localMultiplayer && gameType === "tank") {
+      return this.sendError(clientId, "坦克大战为实时对战，暂不支持同机热座");
+    }
+
+    const seatCount =
+      gameType === "flying" || gameType === "monopoly"
+        ? Math.max(2, Math.min(4, Number(maxPlayers) || 4))
+        : 2;
+
+    // 本地热座：房间只占 1 个连接名额，游戏内座位用 seatCount
+    const connectionLimit = localMultiplayer ? 1 : seatCount;
 
     const roomId = this.generateRoomId();
     const room = {
       id: roomId,
       clients: new Set([clientId]),
       gameType,
-      gameState: this.initializeGameState(gameType, { maxPlayers: normalizedMaxPlayers }),
+      gameState: this.initializeGameState(gameType, { maxPlayers: seatCount }),
       turn: "red",
       created: Date.now(),
-      maxPlayers: normalizedMaxPlayers,
+      maxPlayers: connectionLimit,
+      seatCount,
+      localMultiplayer,
     };
 
     this.rooms.set(roomId, room);
 
     client.roomId = roomId;
-    if (gameType === "flying") {
+
+    if (localMultiplayer && (gameType === "flying" || gameType === "monopoly")) {
+      for (let i = 0; i < seatCount; i++) {
+        const vid = `local_${i}`;
+        if (gameType === "flying") ensureFlyingPlayer(room, vid, { autoStart: false });
+        else ensureMonopolyPlayer(room, vid, { autoStart: false });
+      }
+      if (gameType === "flying") startFlyingGame(room.gameState);
+      else startMonopolyGame(room.gameState);
+      const firstId = room.gameState.order?.[0];
+      client.color = firstId ? room.gameState.players[firstId]?.color : null;
+    } else if (gameType === "flying") {
       ensureFlyingPlayer(room, clientId);
+      const playerState = room.gameState.players?.[clientId];
+      client.color = playerState ? playerState.color : null;
+    } else if (gameType === "monopoly") {
+      ensureMonopolyPlayer(room, clientId);
       const playerState = room.gameState.players?.[clientId];
       client.color = playerState ? playerState.color : null;
     } else {
       client.color = "red";
       if (gameType === "tank") ensureTankPlayers(room);
     }
+
+    const modeHint = localMultiplayer
+      ? `本地热座已开局（${seatCount} 人轮流操作）`
+      : "房间创建成功，等待其他玩家加入...";
 
     client.ws.send(
       JSON.stringify({
@@ -199,8 +242,9 @@ class GameServer {
         color: client.color,
         gameType: room.gameType,
         gameState: room.gameState,
-        maxPlayers: room.maxPlayers,
-        message: "房间创建成功，等待其他玩家加入...",
+        maxPlayers: seatCount,
+        localMultiplayer,
+        message: modeHint,
       }),
     );
 
@@ -213,6 +257,7 @@ class GameServer {
 
     const room = this.rooms.get(roomId);
     if (!room) return this.sendError(clientId, "房间不存在");
+    if (room.localMultiplayer) return this.sendError(clientId, "本地热座房间不可加入");
     const limit = room.maxPlayers || 2;
     if (room.clients.size >= limit) return this.sendError(clientId, "房间已满");
 
@@ -222,6 +267,10 @@ class GameServer {
     client.roomId = roomId;
     if (room.gameType === "flying") {
       ensureFlyingPlayer(room, clientId);
+      const playerState = room.gameState.players?.[clientId];
+      client.color = playerState ? playerState.color : null;
+    } else if (room.gameType === "monopoly") {
+      ensureMonopolyPlayer(room, clientId);
       const playerState = room.gameState.players?.[clientId];
       client.color = playerState ? playerState.color : null;
     } else {
@@ -254,6 +303,15 @@ class GameServer {
       clientId,
     );
 
+    // 大富翁：同步完整状态给房内其他人（含开局）
+    if (room.gameType === "monopoly") {
+      this.broadcastToRoom(roomId, {
+        type: "monopoly_state",
+        gameType: "monopoly",
+        state: room.gameState,
+      });
+    }
+
     this.broadcastRoomList();
   }
 
@@ -276,6 +334,18 @@ class GameServer {
     const room = this.rooms.get(client.roomId);
     if (!room || room.gameType !== "tank") return;
     applyTankInput(room, clientId, data.keys);
+  }
+
+  handleMonopolyAction(clientId, data) {
+    const client = this.clients.get(clientId);
+    if (!client || !client.roomId) return;
+    const room = this.rooms.get(client.roomId);
+    if (!room || room.gameType !== "monopoly") return;
+
+    const result = applyMonopolyAction(room, clientId, data);
+    if (!result.ok) return this.sendError(clientId, result.error);
+
+    this.broadcastToRoom(room.id, result.payload);
   }
 
   handleFlyingAction(clientId, data) {
@@ -336,16 +406,37 @@ class GameServer {
     const room = this.rooms.get(client.roomId);
     if (!room) return;
 
+    const seatCount = room.seatCount || room.maxPlayers || 2;
     room.gameState = this.initializeGameState(room.gameType || "chess", {
-      maxPlayers: room.maxPlayers,
+      maxPlayers: seatCount,
     });
     room.turn = "red";
 
-    // 重新为坦克 / 飞行棋房间补充玩家状态
+    // 重新为坦克 / 飞行棋 / 大富翁房间补充玩家状态
     if (room.gameType === "tank") {
       ensureTankPlayers(room);
     } else if (room.gameType === "flying") {
-      Array.from(room.clients).forEach((cid) => ensureFlyingPlayer(room, cid));
+      if (room.localMultiplayer) {
+        for (let i = 0; i < seatCount; i++) {
+          ensureFlyingPlayer(room, `local_${i}`, { autoStart: false });
+        }
+        if (room.gameState.order.length >= 2) startFlyingGame(room.gameState);
+      } else {
+        Array.from(room.clients).forEach((cid) => ensureFlyingPlayer(room, cid));
+      }
+    } else if (room.gameType === "monopoly") {
+      if (room.localMultiplayer) {
+        for (let i = 0; i < seatCount; i++) {
+          ensureMonopolyPlayer(room, `local_${i}`, { autoStart: false });
+        }
+      } else {
+        Array.from(room.clients).forEach((cid) =>
+          ensureMonopolyPlayer(room, cid, { autoStart: false }),
+        );
+      }
+      if (room.gameState.order.length >= 2) {
+        startMonopolyGame(room.gameState);
+      }
     }
 
     this.broadcastToRoom(room.id, {
@@ -399,12 +490,14 @@ class GameServer {
   }
 
   broadcastRoomList() {
-    const roomList = Array.from(this.rooms.values()).map((room) => ({
+    const roomList = Array.from(this.rooms.values())
+      .filter((room) => !room.localMultiplayer)
+      .map((room) => ({
       id: room.id,
       playerCount: room.clients.size,
       created: room.created,
       gameType: room.gameType || "chess",
-      maxPlayers: room.maxPlayers || 2,
+      maxPlayers: room.seatCount || room.maxPlayers || 2,
     }));
     this.clients.forEach((client) => {
       if (client.ws.readyState === WebSocket.OPEN) {
@@ -421,13 +514,15 @@ class GameServer {
   sendRoomList(clientId) {
     const client = this.clients.get(clientId);
     if (!client) return;
-    const roomList = Array.from(this.rooms.values()).map((room) => ({
-      id: room.id,
-      playerCount: room.clients.size,
-      created: room.created,
-      gameType: room.gameType || "chess",
-      maxPlayers: room.maxPlayers || 2,
-    }));
+    const roomList = Array.from(this.rooms.values())
+      .filter((room) => !room.localMultiplayer)
+      .map((room) => ({
+        id: room.id,
+        playerCount: room.clients.size,
+        created: room.created,
+        gameType: room.gameType || "chess",
+        maxPlayers: room.seatCount || room.maxPlayers || 2,
+      }));
     client.ws.send(JSON.stringify({ type: "room_list", rooms: roomList }));
   }
 
@@ -440,6 +535,7 @@ class GameServer {
   initializeGameState(gameType = "chess", options = {}) {
     if (gameType === "tank") return createTankState();
     if (gameType === "flying") return createFlyingState(options.maxPlayers || 4);
+    if (gameType === "monopoly") return createMonopolyState(options.maxPlayers || 4);
     return createChessState();
   }
 

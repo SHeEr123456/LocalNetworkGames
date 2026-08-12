@@ -68,7 +68,7 @@ export class TankGameClient {
     this.stopInputLoop();
     this._timer = setInterval(() => {
       this.app.sendTankInput(this.keys);
-    }, 50);
+    }, 17);
   }
 
   stopInputLoop() {

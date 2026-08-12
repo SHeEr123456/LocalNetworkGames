@@ -10,7 +10,7 @@
   <div class="container">
     <div class="header">
       <h1>🎮 局域网游戏对战</h1>
-      <p>中国象棋 · 坦克大战 · 飞行棋 — 同一局域网即时对战</p>
+      <p>中国象棋 · 坦克大战 · 飞行棋 · 大富翁 — 同一局域网即时对战</p>
     </div>
 
     <div class="connection-panel" id="connectionPanel">
@@ -29,15 +29,18 @@
           <option value="chess">中国象棋</option>
           <option value="tank">坦克大战</option>
           <option value="flying">飞行棋</option>
+          <option value="monopoly">大富翁</option>
         </select>
         <select id="playerCountSelect" class="select">
           <option value="2">2 人</option>
           <option value="3">3 人</option>
           <option value="4">4 人</option>
         </select>
-        <button class="btn btn-secondary" id="createRoomBtn">创建新房间</button>
+        <button class="btn btn-secondary" id="createRoomBtn">创建联网房间</button>
+        <button class="btn btn-primary" id="localPlayBtn">本地多人开局</button>
         <button class="btn btn-secondary" id="refreshRoomBtn">刷新房间列表</button>
       </div>
+      <p class="local-play-hint">本地多人：同一台电脑轮流操作（象棋 / 飞行棋 / 大富翁），无需开多个窗口</p>
 
       <div id="roomListContainer" style="display: none;">
         <h4>可用房间:</h4>
@@ -64,6 +67,19 @@
             <strong>游戏规则：</strong>点击「掷骰子」掷骰，然后点击高亮棋子移动。
             <br>6点可起飞或额外行动 | 连续3次6点本轮作废 | 同格叠子受保护
             <br><strong>特殊格子：</strong>起飞点 | 彩色三角=跳跃点 | 彩色框=跳跃目标 | 彩色圆=终点
+          </div>
+        </div>
+
+        <div id="monopolyContainer" style="display:none;">
+          <canvas id="monopolyCanvas" width="900" height="720"></canvas>
+          <div class="monopoly-actions">
+            <button class="btn btn-success" id="monopolyBuyBtn" style="display:none;">购买地产</button>
+            <button class="btn" id="monopolySkipBtn" style="display:none;">跳过</button>
+          </div>
+          <div class="monopoly-hint">
+            <strong>环球之旅 · 大富翁：</strong>掷骰绕行长方形棋盘，买地收租，抽机会卡。
+            <br>经过起点领 $200 | 租金约为地价 1/5 | 破产出局，最后存活者获胜
+            <br>2–4 人，至少 2 人开局 | 轮到你时点「掷骰子」，可买地时点「购买」或「跳过」
           </div>
         </div>
 

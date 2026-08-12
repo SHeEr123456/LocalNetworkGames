@@ -95,7 +95,7 @@ function tickTankRoom(room, now) {
   // 更新坦克
   Object.values(players).forEach((p) => {
     if (!p.isAlive) return;
-    const speed = 3;
+    const speed = 1;
     let dx = 0,
       dy = 0;
     if (p.keys.left) dx -= 1;
@@ -157,7 +157,7 @@ function tickTankRoom(room, now) {
         owner: p.id,
         bounces: 0,
         maxBounces: 5,
-        speed: 8,
+        speed: 3,
         color: p.color,
         active: true,
       });

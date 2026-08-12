@@ -73,14 +73,20 @@ function createChessState() {
  * @returns {{ok:true, payload:object}|{ok:false, error:string}}
  */
 function applyChessMove(room, client, data) {
-  // 1) 回合验证
-  if (room.turn !== client.color) return { ok: false, error: "不是你的回合" };
+  // 1) 回合验证（本地热座：同一人轮流下双方）
+  const movingColor = room.localMultiplayer ? room.turn : client.color;
+  if (room.turn !== movingColor) return { ok: false, error: "不是你的回合" };
 
   const { from, to } = data;
   const state = room.gameState;
   const piece = state.board[from.row]?.[from.col];
   const targetPiece = state.board[to.row]?.[to.col] ?? null;
   if (!piece) return { ok: false, error: "没有选中棋子" };
+
+  const isRedPiece = piece === piece.toUpperCase();
+  if ((movingColor === "red") !== isRedPiece) {
+    return { ok: false, error: "只能移动己方棋子" };
+  }
 
   // 2) 规则验证（服务端权威）
   const moveResult = ChessRules.isValidMove(state.board, from.row, from.col, to.row, to.col);
@@ -92,12 +98,22 @@ function applyChessMove(room, client, data) {
 
   // 3.5) 走后自检：验证走子方自身是否被将军（防自杀棋+强制应将）
   // 若走后己方将被将军，回退移动并拒绝
-  const movingColor = client.color;
   if (ChessRules.isCheck(state.board, movingColor)) {
-    // 回退移动
     state.board[from.row][from.col] = piece;
     state.board[to.row][to.col] = targetPiece;
     return { ok: false, error: "走棋后己方将被将军，非法移动" };
+  }
+
+  // 3.6) 走后自检：将帅是否面对面（王不见王）
+  // 检查走子方的将/帅是否暴露在对方将/帅对面
+  const kingPos = ChessRules.findKing(state.board, movingColor);
+  if (kingPos) {
+    const isRedKing = movingColor === "red";
+    if (ChessRules.isFacingKings(state.board, kingPos[0], kingPos[1], isRedKing)) {
+      state.board[from.row][from.col] = piece;
+      state.board[to.row][to.col] = targetPiece;
+      return { ok: false, error: "走棋后将帅面对面，非法移动" };
+    }
   }
 
   // 4) 记录历史
@@ -114,7 +130,7 @@ function applyChessMove(room, client, data) {
   let winner = null;
   if (moveResult.captures && moveResult.targetPiece && moveResult.targetPiece.toLowerCase() === "k") {
     gameOver = true;
-    winner = client.color;
+    winner = movingColor;
     state.gameOver = true;
     state.winner = winner;
   }

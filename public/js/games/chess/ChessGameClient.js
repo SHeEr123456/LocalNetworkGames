@@ -83,7 +83,13 @@ export class ChessGameClient {
     const captureText = captures ? " 吃子" : "";
     this.app.addMoveToHistory(`${pieceName} ${fromPos} → ${toPos}${captureText}`);
 
-    const who = clientId === this.app.clientId ? "你" : "对手";
+    const who = this.app.isHotseat?.()
+      ? piece === piece.toUpperCase()
+        ? "红方"
+        : "黑方"
+      : clientId === this.app.clientId
+        ? "你"
+        : "对手";
     this.app.addChatMessage("系统", `${who}${pieceName}${fromPos}→${toPos}${captures ? "，并吃子！" : ""}`, true);
 
     // 4) 将军提醒
@@ -285,8 +291,9 @@ export class ChessGameClient {
     const isRed = piece === piece.toUpperCase();
     const pieceColor = isRed ? "red" : "black";
 
-    // 回合与阵营校验
-    if (pieceColor !== this.app.playerColor || this.gameState.turn !== this.app.playerColor) {
+    // 回合与阵营校验（本地热座：跟当前回合颜色走）
+    const activeColor = this.app.isHotseat?.() ? this.gameState.turn : this.app.playerColor;
+    if (pieceColor !== activeColor || this.gameState.turn !== activeColor) {
       this.app.playSound("invalid");
       return;
     }
