@@ -16,8 +16,13 @@
  *    - 红色：300(基地) → 301(起飞) → 029-056-001-026 → 310-350 → 333(终点)
  *    - 绿色：400(基地) → 401(起飞) → 043-056-001-040 → 410-450 → 444(终点)
  * 
- * 4. 打飞机规则：
- *    - 通过普通行走到达与自身相同颜色的格子（非x00）时，跳跃4个距离到下一个相同颜色格子
+ * 4. 同色格跳跃规则（俗称"跳"）：
+ *    - 通过普通行走到达与自身相同颜色的格子（非 x00）时，前进 4 个距离到下一个相同颜色格子
+ *    - 由于 001-052 的颜色以 4 为周期循环，跳完必然落在同色格，故每次移动只允许触发一次跳跃
+ *
+ * 5. 击落规则（俗称"打飞机"）：
+ *    - 落点上有对手棋子时，将该对手棋子打回基地
+ *    - 落点上有对手 2 枚及以上叠子时，叠子受保护，不予击落
  * 
  * 5. 特殊跳跃：
  *    - 绿色棋子到达006 → 直接跳到018（不触发打飞机）
@@ -112,13 +117,15 @@ function generateColorPaths() {
     111 // 终点
   ];
   
-  // 蓝色路径：201 → 014-052-001-010 → 210-250 → 222
+  // 蓝色路径：201 → 014-052-001-011 → 210-250 → 222
+  // 注意：蓝色主路径段必须到 011 为止（014..052 共 39 格 + 001..011 共 11 格 = 50 格，
+  // 与黄/红/绿三方等长）。011 正下方即蓝色终点通道入口 210，若漏掉 011 会让蓝方少走一格。
   const bluePath = [
     201, // 起飞点
     14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
     31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
     51, 52,
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     210, 220, 230, 240, 250, // 终点通道
     222 // 终点
   ];
@@ -501,7 +508,7 @@ function applyMove(state, player, pieceIndex, dice) {
     let currentIndex = piece.pathIndex;
     let stepsRemaining = dice;
     let jumpMessages = [];
-    let hasJumped = false; // 标记是否已经触发过打飞机
+    let hasJumped = false; // 标记是否已经触发过同色格跳跃
     
     while (stepsRemaining > 0) {
       currentIndex++;
@@ -560,16 +567,18 @@ function applyMove(state, player, pieceIndex, dice) {
       }
     }
     
-    // 2. 检查打飞机（颜色跳跃）- 只在普通行走时触发一次
+    // 2. 同色格跳跃（+4）- 只在普通行走时触发一次
     // 判断当前格子是否是自己颜色的格子（001-052范围内）
-    // 排除011、024、037、050这四个格子
+    // 排除011、024、037、050：这四格分别是蓝/红/绿/黄四方主路径段的最后一格，
+    // 它们紧邻各自的终点通道入口（011→210、024→310、037→410、050→110），
+    // 若在此触发 +4 会直接跳过终点通道入口，导致行进异常。
     if (!hasJumped && piece.cellNum >= 1 && piece.cellNum <= 52) {
-      // 排除不触发打飞机的格子
+      // 排除不触发同色跳跃的格子
       if (piece.cellNum !== 11 && piece.cellNum !== 24 && piece.cellNum !== 37 && piece.cellNum !== 50) {
         const cellColor = board.mainPathColors[piece.cellNum];
         if (cellColor === player.color) {
-          // 跳跃4格
-          jumpMessages.push("打飞机+4");
+          // 前进4格
+          jumpMessages.push("同色格跳跃+4");
           hasJumped = true; // 标记已触发，防止再次触发
           
           // 继续移动4格
@@ -620,7 +629,8 @@ function applyMove(state, player, pieceIndex, dice) {
 }
 
 /**
- * 检查碰撞
+ * 检查碰撞（击落规则）
+ * 落点有对手棋子时将其打回基地；对手在该格形成叠子（>=2 枚）时受保护，不予击落
  */
 function checkCollision(state, player, piece, pieceIndex) {
   const board = state.board;
@@ -659,7 +669,7 @@ function checkCollision(state, player, piece, pieceIndex) {
         opPiece.col = -1;
         opPiece.pathIndex = -1;
         opPiece.cellNum = -1;
-        console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 打回了 ${COLOR_NAMES[pl.color]} 的棋子`);
+        console.log(`[飞行棋] ${COLOR_NAMES[player.color]} 击落了 ${COLOR_NAMES[pl.color]} 的棋子`);
       }
     });
   });

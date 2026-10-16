@@ -128,6 +128,18 @@ function applyChessMove(room, client, data) {
   // 7) 检查是否将军（走子后，对方是否被将军）
   const isCheckAfterMove = ChessRules.isCheck(state.board, room.turn);
 
+  // 8) 绝杀 / 困毙判定：对方已无任何合法着法则判负
+  //    - 正被将军且无解 → 绝杀（checkmate）
+  //    - 未被将军但无子可动 → 困毙（stalemate，中国象棋同样判负）
+  let endReason = null;
+  if (!gameOver && !ChessRules.hasLegalMove(state.board, room.turn)) {
+    gameOver = true;
+    winner = client.color;
+    state.gameOver = true;
+    state.winner = winner;
+    endReason = isCheckAfterMove ? "checkmate" : "stalemate";
+  }
+
   return {
     ok: true,
     payload: {
@@ -144,6 +156,7 @@ function applyChessMove(room, client, data) {
       gameOver,
       winner,
       isCheck: isCheckAfterMove, // 是否将军
+      endReason, // 'checkmate' 绝杀 | 'stalemate' 困毙 | null
     },
   };
 }

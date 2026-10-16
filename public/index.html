@@ -2,116 +2,203 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>局域网游戏对战</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0E1013" />
+  <title>局域网游戏厅</title>
   <link rel="stylesheet" href="/css/main.css" />
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>🎮 局域网游戏对战</h1>
-      <p>中国象棋 · 坦克大战 · 飞行棋 — 同一局域网即时对战</p>
-    </div>
+  <h2 class="sr-only">局域网游戏厅：同一局域网内打开网页即可对战，零安装、零账号。</h2>
 
-    <div class="connection-panel" id="connectionPanel">
-      <h3>连接设置</h3>
-      <div class="input-group">
+  <div class="app">
+    <!-- ================= 侧栏 ================= -->
+    <aside class="side" id="connectionPanel">
+      <div class="brand"><span class="brand-mark">局</span>局域网游戏厅</div>
+
+      <section class="side-sec">
+        <h3>连接服务器</h3>
         <input
           type="text"
           id="serverAddress"
-          placeholder="服务器地址 (例如: 192.168.1.100:3000)"
-          value="localhost:3000"
+          placeholder="192.168.1.100:3000"
+          aria-label="服务器地址"
         />
-        <button class="btn btn-primary" id="connectBtn">连接服务器</button>
-      </div>
-      <div class="input-group">
-        <select id="gameSelect" class="select">
+        <button class="btn btn-solid btn-block" id="connectBtn">连接</button>
+      </section>
+
+      <section class="side-sec" id="gameSelectSection">
+        <h3>选择游戏</h3>
+        <div class="nav" id="gameNav">
+          <button class="nav-item" data-game="chess" type="button">
+            <span>中国象棋</span><span class="count">2 人</span>
+          </button>
+          <button class="nav-item" data-game="tank" type="button">
+            <span>坦克大战</span><span class="count">2–4 人</span>
+          </button>
+          <button class="nav-item" data-game="flying" type="button">
+            <span>飞行棋</span><span class="count">2–4 人</span>
+          </button>
+          <button class="nav-item" data-game="monopoly" type="button">
+            <span>大富翁 · 厦门</span><span class="count">2–4 人</span>
+          </button>
+        </div>
+        <!-- 由卡片 / 侧栏导航驱动的隐藏下拉，保持既有 JS 接线不变 -->
+        <select id="gameSelect" hidden aria-hidden="true" tabindex="-1">
           <option value="chess">中国象棋</option>
           <option value="tank">坦克大战</option>
           <option value="flying">飞行棋</option>
+          <option value="monopoly">大富翁 · 厦门</option>
         </select>
-        <select id="playerCountSelect" class="select">
+      </section>
+
+      <section class="side-sec" id="createRoomSection">
+        <h3>创建房间</h3>
+        <select id="playerCountSelect" class="select" aria-label="房间人数">
           <option value="2">2 人</option>
           <option value="3">3 人</option>
           <option value="4">4 人</option>
         </select>
-        <button class="btn btn-secondary" id="createRoomBtn">创建新房间</button>
-        <button class="btn btn-secondary" id="refreshRoomBtn">刷新房间列表</button>
+        <button class="btn btn-solid btn-block" id="createRoomBtn">创建新房间</button>
+        <button class="btn btn-block" id="refreshRoomBtn">刷新房间列表</button>
+      </section>
+
+      <div class="side-foot">
+        <div id="connectionStatus" class="status">等待连接服务器...</div>
       </div>
+    </aside>
 
-      <div id="roomListContainer" style="display: none;">
-        <h4>可用房间:</h4>
-        <div class="room-list" id="roomList"></div>
-      </div>
-
-      <div class="status-box" id="connectionStatus">等待连接服务器...</div>
-    </div>
-
-    <div class="game-container" style="display: none;" id="gameContainer">
-      <div class="board-section">
-        <div id="chessboard">
-          <div class="river">楚河 汉界</div>
-        </div>
-
-        <div id="tankContainer" style="display:none;">
-          <canvas id="tankCanvas" width="800" height="600"></canvas>
-          <div class="tank-hint">WASD移动，J射击</div>
-        </div>
-
-        <div id="flyingContainer" style="display:none;">
-          <canvas id="flyingCanvas" width="750" height="800"></canvas>
-          <div class="flying-hint">
-            <strong>游戏规则：</strong>点击「掷骰子」掷骰，然后点击高亮棋子移动。
-            <br>6点可起飞或额外行动 | 连续3次6点本轮作废 | 同格叠子受保护
-            <br><strong>特殊格子：</strong>起飞点 | 彩色三角=跳跃点 | 彩色框=跳跃目标 | 彩色圆=终点
+    <!-- ================= 主区 ================= -->
+    <main class="main">
+      <!-- 大厅 -->
+      <section id="lobbyView">
+        <header class="page-head">
+          <div>
+            <h1>选择游戏，开局</h1>
+            <p>同一局域网，打开网页就能玩。零安装、零账号，房主一条命令启动，其他设备输入地址即可加入。</p>
           </div>
-        </div>
-
-        <div class="controls">
-          <button class="btn btn-success" id="restartBtn">重新开始</button>
-          <button class="btn" id="surrenderBtn">认输</button>
-          <button class="btn" id="toggleSoundBtn">音效: 开</button>
-          <button class="btn" id="rollDiceBtn" style="display:none;">掷骰子</button>
-        </div>
-      </div>
-
-      <div class="info-section">
-        <div class="info-card" id="playerInfo">
-          <h3>玩家信息</h3>
-          <div>你的颜色: <span id="playerColor" class="bold">未连接</span></div>
-          <div>当前回合: <span id="currentTurn" class="bold">等待开始</span></div>
-          <div>房间号: <span id="roomId" class="bold">-</span></div>
-        </div>
-
-        <div class="info-card">
-          <h3>聊天室</h3>
-          <div id="chatMessages"></div>
-          <div class="chat-input">
-            <input type="text" id="chatInput" placeholder="输入消息..." />
-            <button class="btn btn-primary" id="sendChatBtn">发送</button>
+          <div class="bar">
+            <button class="btn btn-solid" id="quickCreateBtn" type="button">创建房间</button>
           </div>
+        </header>
+
+        <div class="block-title">
+          <h2>游戏目录</h2>
+          <span id="gameCountLabel">4 款可用</span>
+        </div>
+        <div class="grid" id="gameGrid">
+          <button class="card" type="button" data-game="chess">
+            <div class="card-top"><span class="tile">象</span><span class="card-name">中国象棋</span></div>
+            <span class="card-desc">完整规则，含禁自杀棋、强制应将、绝杀与困毙判定</span>
+            <div class="card-meta"><span class="chip">回合制</span><span class="chip">2 人</span><span class="chip">点击</span></div>
+          </button>
+          <button class="card" type="button" data-game="tank">
+            <div class="card-top"><span class="tile">坦</span><span class="card-name">坦克大战</span></div>
+            <span class="card-desc">20 FPS 服务端权威同步，子弹撞墙可反弹</span>
+            <div class="card-meta"><span class="chip">实时</span><span class="chip">2–4 人</span><span class="chip">键盘 / 触屏</span></div>
+          </button>
+          <button class="card" type="button" data-game="flying">
+            <div class="card-top"><span class="tile">飞</span><span class="card-name">飞行棋</span></div>
+            <span class="card-desc">掷骰起飞、同色格跳跃、击落与叠子保护</span>
+            <div class="card-meta"><span class="chip">回合制</span><span class="chip">2–4 人</span><span class="chip">点击</span></div>
+          </button>
+          <button class="card" type="button" data-game="monopoly">
+            <div class="card-top"><span class="tile">富</span><span class="card-name">大富翁 · 厦门</span></div>
+            <span class="card-desc">环岛 40 格，鼓浪屿到双子塔，买地盖楼、机会与命运</span>
+            <div class="card-meta"><span class="chip">回合制</span><span class="chip">2–4 人</span><span class="chip">点击</span></div>
+          </button>
         </div>
 
-        <div class="info-card">
-          <h3>棋谱记录</h3>
-          <div id="moveHistory"></div>
+        <div class="block-title">
+          <h2>房间列表</h2>
+          <span>实时刷新</span>
         </div>
-      </div>
-    </div>
+        <div id="roomListContainer" style="display: none;">
+          <div class="rows" id="roomList"></div>
+        </div>
+      </section>
 
-    <div class="instructions">
-      <h4>使用说明：</h4>
-      <ul>
-        <li><strong>第一步：启动服务器</strong> - 在一台电脑上运行 <code>npm start</code></li>
-        <li><strong>第二步：创建房间</strong> - 房主点击“创建新房间”</li>
-        <li><strong>第三步：加入房间</strong> - 另一台电脑输入服务器地址，刷新房间列表并加入</li>
-        <li><strong>注意：</strong> 确保所有设备在同一局域网内，防火墙允许 3000 端口</li>
-      </ul>
-    </div>
+      <!-- 房间 -->
+      <section class="game-container" id="gameContainer" style="display: none;">
+        <div class="room-bar">
+          <button class="back" id="backBtn" type="button">← 返回大厅</button>
+          <h2 id="roomGameName">中国象棋</h2>
+          <span class="tag tag-wait" id="roomStateTag">等待中</span>
+          <span class="room-no tnum">房间 #<span id="roomId">-</span></span>
+        </div>
+
+        <div class="room-grid">
+          <div class="board-section">
+            <div id="chessboard">
+              <div class="river">楚河 汉界</div>
+            </div>
+
+            <div id="tankContainer" style="display: none;">
+              <canvas id="tankCanvas" width="800" height="600"></canvas>
+              <div class="tank-hint">WASD 移动，J 射击（触屏可用下方方向键）</div>
+              <div class="touch-pad" id="tankTouchPad">
+                <button class="pad-btn pad-up" data-key="up" type="button" aria-label="上">▲</button>
+                <button class="pad-btn pad-left" data-key="left" type="button" aria-label="左">◀</button>
+                <button class="pad-btn pad-shoot" data-key="shoot" type="button" aria-label="射击">●</button>
+                <button class="pad-btn pad-right" data-key="right" type="button" aria-label="右">▶</button>
+                <button class="pad-btn pad-down" data-key="down" type="button" aria-label="下">▼</button>
+              </div>
+            </div>
+
+            <div id="flyingContainer" style="display: none;">
+              <canvas id="flyingCanvas" width="750" height="750"></canvas>
+              <div class="flying-hint">
+                <strong>玩法：</strong>点击「掷骰子」掷骰，再点击高亮棋子移动。
+                <br>6 点可起飞或额外行动 | 连续 3 次 6 点本轮作废 | 同格叠子受保护
+                <br>落到同色格前进 4 格（跳跃）| 落到对手棋子上将其击落回基地
+              </div>
+            </div>
+
+            <div id="monopolyContainer" style="display: none;">
+              <div class="mono-stage">
+                <canvas id="monopolyCanvas" width="880" height="880"></canvas>
+              </div>
+              <div class="mono-bar" id="monopolyBar"></div>
+              <div class="mono-actions" id="monopolyActions"></div>
+              <div class="mono-players" id="monopolyPlayers"></div>
+              <div class="mono-own" id="monopolyOwn"></div>
+              <div class="mono-log" id="monopolyLog"></div>
+            </div>
+
+            <div class="controls">
+              <button class="btn btn-solid" id="restartBtn" type="button">重新开始</button>
+              <button class="btn" id="surrenderBtn" type="button">认输</button>
+              <button class="btn" id="toggleSoundBtn" type="button">音效：开</button>
+              <button class="btn btn-solid" id="rollDiceBtn" style="display: none;" type="button">掷骰子</button>
+            </div>
+          </div>
+
+          <aside class="info-section">
+            <div class="panel" id="playerInfo">
+              <h3>玩家信息</h3>
+              <div class="kv"><span>我的阵营</span><b id="playerColor">未连接</b></div>
+              <div class="kv"><span>当前回合</span><b id="currentTurn">等待开始</b></div>
+              <div class="kv"><span>房间号</span><b class="tnum" id="roomIdEcho">-</b></div>
+            </div>
+
+            <div class="panel">
+              <h3>聊天</h3>
+              <div class="chat-list" id="chatMessages"></div>
+              <div class="chat-input">
+                <input type="text" id="chatInput" placeholder="输入消息…" aria-label="聊天输入" />
+                <button class="btn" id="sendChatBtn" type="button">发送</button>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h3>行动记录</h3>
+              <div class="move-list" id="moveHistory"></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <!-- 入口：把逻辑拆到 public/js 下，便于维护 -->
   <script type="module" src="/js/main.js"></script>
 </body>
 </html>
-

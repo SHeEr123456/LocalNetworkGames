@@ -86,8 +86,8 @@ function applyTankInput(room, clientId, keys) {
 function tickTankRoom(room, now) {
   const state = room.gameState;
   if (!state || state.gameOver) return;
-  // 允许1人以上开始游戏（支持单人练习或多人对战）
-  if (room.clients.size < 2) return;
+  // 支持单人练习：房内只要有玩家就持续 tick（判胜逻辑会自行排除单人情况）
+  if (room.clients.size < 1) return;
 
   ensureTankPlayers(room);
   const players = state.players;
@@ -259,8 +259,10 @@ function tickTankRoom(room, now) {
   state.bullets = state.bullets.filter((b) => b.active);
 
   // 判胜：只剩一人或无人存活时游戏结束
-  const alive = Object.values(players).filter((p) => p.isAlive);
-  if (!state.gameOver) {
+  // 注意：仅在房内存在 >= 2 名玩家时才判胜，否则单人练习会被立刻判定为"获胜"
+  const playerList = Object.values(players);
+  const alive = playerList.filter((p) => p.isAlive);
+  if (!state.gameOver && playerList.length >= 2) {
     if (alive.length === 1) {
       state.gameOver = true;
       state.winner = alive[0].color;

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>风格方案 B · 暖纸墨色 — 局域网游戏厅</title>
+<style>
+:root{
+  --paper:#FBFAF7; --paper-2:#F4F1EA; --surface:#FFFFFF;
+  --ink:#1A1917; --ink-2:#4A4640; --ink-3:#6E6A62; --ink-4:#9A948A;
+  --rule:#E3DFD7; --rule-2:#CFC9BE;
+  --accent:#B4432A; --accent-hover:#93351F; --accent-subtle:rgba(180,67,42,.07);
+  --green:#3F6B45; --amber:#9A6A16;
+
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:20px; --space-6:24px; --space-8:32px; --space-10:40px; --space-12:48px;
+  --radius-sm:3px; --radius-md:5px; --radius-full:9999px;
+
+  --font-body:"Inter",system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-serif:"Noto Serif SC","Source Han Serif SC","Songti SC",Georgia,"STSong",serif;
+  --dur:220ms; --ease:cubic-bezier(.22,1,.36,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font-body);
+  font-size:.9375rem;line-height:1.7;-webkit-font-smoothing:antialiased}
+h1,h2,h3{margin:0;font-family:var(--font-serif);font-weight:600;line-height:1.35;letter-spacing:.01em}
+p{margin:0}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);border:0}
+
+.topbar{border-bottom:1px solid var(--rule);background:var(--paper);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:var(--space-4) var(--space-8);gap:var(--space-6)}
+.brand{display:flex;align-items:baseline;gap:var(--space-3);font-family:var(--font-serif);
+  font-weight:600;font-size:1.0625rem;letter-spacing:.04em}
+.brand em{font-style:normal;font-size:.6875rem;font-family:var(--font-body);
+  color:var(--ink-3);letter-spacing:.16em;text-transform:uppercase}
+.topbar-info{font-size:.8125rem;color:var(--ink-3);display:flex;gap:var(--space-5);align-items:center}
+.dot{width:5px;height:5px;border-radius:var(--radius-full);background:var(--green);
+  display:inline-block;margin-right:6px;vertical-align:1px}
+.tnum{font-variant-numeric:tabular-nums}
+
+.shell{max-width:1180px;margin:0 auto;padding:var(--space-12) var(--space-8) var(--space-12);
+  display:grid;grid-template-columns:300px 1fr;gap:var(--space-12);align-items:start}
+.rail{position:sticky;top:var(--space-8)}
+.rail h1{font-size:clamp(1.75rem,1.4rem+1.2vw,2.5rem);line-height:1.25;margin-bottom:var(--space-5)}
+.rail .lede{color:var(--ink-3);font-size:.9375rem;line-height:1.75;max-width:28ch}
+.rail dl{margin:var(--space-8) 0 0;font-size:.8125rem;border-top:1px solid var(--rule)}
+.rail .kv{display:flex;justify-content:space-between;padding:var(--space-3) 0;border-bottom:1px solid var(--rule)}
+.rail .kv dt{color:var(--ink-3)} .rail .kv dd{margin:0;font-weight:500}
+
+.rule-title{display:flex;align-items:baseline;justify-content:space-between;
+  border-top:1px solid var(--ink);padding-top:var(--space-3);margin:0 0 var(--space-6)}
+.rule-title h2{font-size:1.125rem;letter-spacing:.02em}
+.rule-title span{font-size:.8125rem;color:var(--ink-3)}
+
+.games{list-style:none;margin:0 0 var(--space-12);padding:0;border-top:1px solid var(--rule)}
+.games li{border-bottom:1px solid var(--rule)}
+.game{display:grid;grid-template-columns:34px 1fr auto;gap:var(--space-5);align-items:center;
+  width:100%;background:none;border:0;text-align:left;padding:var(--space-5) var(--space-2);
+  cursor:pointer;transition:background var(--dur) var(--ease),padding var(--dur) var(--ease)}
+.game:hover{background:var(--paper-2);padding-left:var(--space-4)}
+.game:hover .go{color:var(--accent)}
+.idx{font-family:var(--font-serif);font-size:.875rem;color:var(--ink-4);
+  font-variant-numeric:tabular-nums}
+.game-name{font-family:var(--font-serif);font-size:1.0625rem;font-weight:600}
+.game-desc{color:var(--ink-3);font-size:.8125rem;margin-top:2px}
+.game-meta{display:flex;align-items:center;gap:var(--space-4);font-size:.8125rem;color:var(--ink-3)}
+.tags{display:flex;gap:var(--space-3)}
+.tags i{font-style:normal}
+.go{font-size:.8125rem;color:var(--ink-4);transition:color var(--dur) var(--ease)}
+
+.rooms{list-style:none;margin:0 0 var(--space-12);padding:0;border-top:1px solid var(--rule)}
+.rooms li{display:grid;grid-template-columns:76px 1fr 80px 84px auto;gap:var(--space-4);
+  align-items:center;padding:var(--space-4) var(--space-2);border-bottom:1px solid var(--rule);
+  font-size:.875rem}
+.rooms .head{font-size:.75rem;color:var(--ink-4);border-bottom:1px solid var(--rule-2);
+  letter-spacing:.08em;padding-top:var(--space-2);padding-bottom:var(--space-2)}
+.state{font-size:.75rem;letter-spacing:.06em}
+.state.wait{color:var(--amber)} .state.live{color:var(--green)}
+
+.btn{background:none;border:1px solid var(--rule-2);border-radius:var(--radius-sm);
+  padding:6px 14px;font-size:.8125rem;cursor:pointer;color:var(--ink-2);
+  transition:border-color var(--dur) var(--ease),color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.btn:hover{border-color:var(--ink);color:var(--ink)}
+.btn-solid{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.btn-solid:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+
+.rulesep{border:0;border-top:1px solid var(--rule);margin:0 0 var(--space-6)}
+.room-bar{display:flex;align-items:baseline;gap:var(--space-5);margin-bottom:var(--space-6);
+  padding-bottom:var(--space-3);border-bottom:1px solid var(--ink)}
+.room-bar h2{font-size:1.25rem}
+.back{background:none;border:0;padding:0;color:var(--ink-3);cursor:pointer;font-size:.8125rem}
+.back:hover{color:var(--ink)}
+.room-grid{display:grid;grid-template-columns:1fr 280px;gap:var(--space-8);align-items:start}
+.canvas{border:1px solid var(--rule-2);background:var(--surface);border-radius:var(--radius-md);
+  aspect-ratio:9/10;max-height:440px;display:grid;place-items:center;color:var(--ink-4);font-size:.8125rem}
+.panel h3{font-size:.75rem;font-family:var(--font-body);font-weight:500;color:var(--ink-4);
+  letter-spacing:.14em;text-transform:uppercase;margin-bottom:var(--space-4)}
+.panel + .panel{margin-top:var(--space-8)}
+.seat{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) 0;
+  border-bottom:1px solid var(--rule);font-size:.875rem}
+.seat:last-of-type{border-bottom:0}
+.sw{width:11px;height:11px;border-radius:var(--radius-full);flex:none}
+.sw-r{background:#B4432A} .sw-k{background:#2A2724}
+.msg{font-size:.8125rem;padding:var(--space-2) 0;border-bottom:1px solid var(--rule);color:var(--ink-2)}
+.msg:last-of-type{border-bottom:0}
+.msg b{font-weight:600;margin-right:8px;font-family:var(--font-serif)}
+.msg.sys{color:var(--ink-4)}
+.msg.sys b{font-family:var(--font-body)}
+.msg-input{display:flex;gap:var(--space-2);margin-top:var(--space-4)}
+.msg-input input{flex:1;background:none;border:0;border-bottom:1px solid var(--rule-2);
+  padding:6px 2px;font-size:.8125rem}
+.acts{display:flex;gap:var(--space-2);flex-wrap:wrap}
+
+@media (max-width:980px){ .shell{grid-template-columns:1fr;gap:var(--space-8)} .rail{position:static} }
+@media (max-width:640px){
+  .shell{padding:var(--space-6) var(--space-4) var(--space-8)}
+  .topbar{padding:var(--space-3) var(--space-4);flex-wrap:wrap;gap:var(--space-3)}
+  .room-grid{grid-template-columns:1fr}
+  .game{grid-template-columns:24px 1fr;gap:var(--space-3)}
+  .game-meta{grid-column:2;justify-content:flex-start}
+  .rooms li{grid-template-columns:64px 1fr auto;gap:var(--space-2) var(--space-3)}
+  .rooms .head{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms !important}}
+</style>
+</head>
+<body>
+<h2 class="sr-only">风格方案 B：暖纸墨色。以暖米白纸感底色、宋体标题、细分割线与朱红单点强调构成的东方极简大厅。</h2>
+
+<header class="topbar">
+  <div class="brand">局域网游戏厅 <em>LAN Lounge</em></div>
+  <div class="topbar-info">
+    <span><span class="dot"></span>已连接 <span class="tnum">192.168.100.95:3100</span></span>
+    <button class="btn">昵称：阿泽</button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail">
+    <h1>选择游戏，<br />开局</h1>
+    <p class="lede">同一局域网，打开网页就能玩。零安装、零账号，房主一条命令启动。</p>
+    <dl>
+      <div class="kv"><dt>在架游戏</dt><dd class="tnum">5 款</dd></div>
+      <div class="kv"><dt>进行中房间</dt><dd class="tnum">3 个</dd></div>
+      <div class="kv"><dt>在线设备</dt><dd class="tnum">6 台</dd></div>
+    </dl>
+  </aside>
+
+  <main>
+    <div class="rule-title"><h2>游戏目录</h2><span>点击任一款即可开局</span></div>
+    <ul class="games">
+      <li><button class="game">
+        <span class="idx">01</span>
+        <span><span class="game-name">中国象棋</span><span class="game-desc">完整规则，含绝杀与困毙判定</span></span>
+        <span class="game-meta"><span class="tags"><i>回合制</i><i>2 人</i><i>点击</i></span><span class="go">开局 →</span></span>
+      </button></li>
+      <li><button class="game">
+        <span class="idx">02</span>
+        <span><span class="game-name">坦克大战</span><span class="game-desc">20 FPS 权威同步，子弹可反弹</span></span>
+        <span class="game-meta"><span class="tags"><i>实时</i><i>2–4 人</i><i>键盘</i></span><span class="go">开局 →</span></span>
+      </button></li>
+      <li><button class="game">
+        <span class="idx">03</span>
+        <span><span class="game-name">飞行棋</span><span class="game-desc">掷骰起飞、同色跳跃、叠子保护</span></span>
+        <span class="game-meta"><span class="tags"><i>回合制</i><i>2–4 人</i><i>点击</i></span><span class="go">开局 →</span></span>
+      </button></li>
+      <li><button class="game">
+        <span class="idx">04</span>
+        <span><span class="game-name">五子棋</span><span class="game-desc">15×15 棋盘，五连即胜</span></span>
+        <span class="game-meta"><span class="tags"><i>回合制</i><i>2 人</i><i>点击</i></span><span class="go">开局 →</span></span>
+      </button></li>
+      <li><button class="game">
+        <span class="idx">05</span>
+        <span><span class="game-name">大富翁</span><span class="game-desc">买地盖房、过路收费、机会与命运</span></span>
+        <span class="game-meta"><span class="tags"><i>回合制</i><i>2–4 人</i><i>点击</i></span><span class="go">开局 →</span></span>
+      </button></li>
+    </ul>
+
+    <div class="rule-title"><h2>房间列表</h2><span>每 3 秒自动刷新</span></div>
+    <ul class="rooms">
+      <li class="head"><span>房间号</span><span>游戏</span><span>人数</span><span>状态</span><span></span></li>
+      <li>
+        <span class="tnum">#4821</span><span>中国象棋</span><span class="tnum">1 / 2</span>
+        <span class="state wait">等待中</span><span><button class="btn btn-solid">加入</button></span>
+      </li>
+      <li>
+        <span class="tnum">#4817</span><span>飞行棋</span><span class="tnum">3 / 4</span>
+        <span class="state live">对局中</span><span><button class="btn">加入</button></span>
+      </li>
+      <li>
+        <span class="tnum">#4812</span><span>坦克大战</span><span class="tnum">2 / 4</span>
+        <span class="state live">对局中</span><span><button class="btn">加入</button></span>
+      </li>
+    </ul>
+
+    <div class="room-bar">
+      <button class="back">← 返回大厅</button>
+      <h2>中国象棋</h2>
+      <span class="state wait">等待中</span>
+      <span class="tnum" style="color:var(--ink-3);font-size:.8125rem">房间 #4821</span>
+    </div>
+
+    <div class="room-grid">
+      <div class="canvas">棋盘画布区域</div>
+      <aside>
+        <div class="panel">
+          <h3>玩家</h3>
+          <div class="seat"><span class="sw sw-r"></span>红方 · 阿泽（你）</div>
+          <div class="seat"><span class="sw sw-k"></span>黑方 · 小柯</div>
+        </div>
+        <div class="panel">
+          <h3>聊天</h3>
+          <div class="msg"><b>小柯</b>这把我要赢</div>
+          <div class="msg sys"><b>系统</b>红方先行</div>
+          <div class="msg-input">
+            <input type="text" placeholder="输入消息…" aria-label="聊天输入" />
+            <button class="btn">发送</button>
+          </div>
+        </div>
+        <div class="panel acts">
+          <button class="btn">重新开始</button>
+          <button class="btn">认输</button>
+          <button class="btn">音效：开</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+</body>
+</html>

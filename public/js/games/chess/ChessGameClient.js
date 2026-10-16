@@ -6,6 +6,13 @@
 
 import { ChessRules } from "./ChessRulesClient.js";
 
+/** 棋盘几何：横向 8 个间隔、纵向 9 个间隔，两侧各留半个间隔作为棋子半径的余量 */
+const COLS = 8;
+const ROWS = 9;
+const H_RATIO = COLS + 0.5;
+const V_RATIO = ROWS + 0.5;
+const PIECE_SCALE = 0.86;
+
 export class ChessGameClient {
   constructor({ app, boardEl }) {
     this.app = app;
@@ -16,6 +23,7 @@ export class ChessGameClient {
     this.validMoves = []; // [ [row,col], ... ]
 
     this._onBoardClick = (e) => this._handleBoardClick(e);
+    this._onResize = () => this.renderBoard();
 
     this.pieceMap = {
       K: "帅",
@@ -40,11 +48,27 @@ export class ChessGameClient {
     this.clearSelection();
     this.renderBoard();
     this.boardEl.addEventListener("click", this._onBoardClick);
+    window.addEventListener("resize", this._onResize);
     this.app.updatePlayerInfo();
   }
 
   destroy() {
     this.boardEl.removeEventListener("click", this._onBoardClick);
+    window.removeEventListener("resize", this._onResize);
+  }
+
+  /**
+   * 依据棋盘实际尺寸换算出交叉点间距与边距，保证棋子始终居中落在交叉点内
+   */
+  computeMetrics() {
+    const el = this.boardEl;
+    const paddingWidth = el.clientWidth || 512;
+    const grid = paddingWidth / H_RATIO;
+    return {
+      grid,
+      margin: grid / 2,
+      pieceSize: grid * PIECE_SCALE,
+    };
   }
 
   gameActive() {
@@ -59,7 +83,7 @@ export class ChessGameClient {
   }
 
   onServerMove(data) {
-    const { from, to, piece, captures, board, turn, clientId, gameOver, winner, isCheck } = data;
+    const { from, to, piece, captures, board, turn, clientId, gameOver, winner, isCheck, endReason } = data;
 
     // 1) 用服务端棋盘（权威）
     if (board) this.gameState.board = board;
@@ -104,14 +128,40 @@ export class ChessGameClient {
     }
 
     if (this.gameState.gameOver) {
-      const winText =
-        this.gameState.winner === "red"
-          ? "红方胜利！"
-          : this.gameState.winner === "black"
-            ? "黑方胜利！"
-            : "游戏结束";
-      this.app.addChatMessage("系统", winText, true);
+      this.announceGameOver(endReason);
     }
+  }
+
+  /**
+   * 公布对局结果
+   * @param {string} [endReason] - 'checkmate' 绝杀 | 'stalemate' 困毙 | 'surrender' 认输
+   */
+  announceGameOver(endReason) {
+    const winner = this.gameState?.winner;
+    const winText =
+      winner === "red" ? "红方胜利！" : winner === "black" ? "黑方胜利！" : "游戏结束";
+    const reasonText =
+      endReason === "checkmate"
+        ? "（绝杀）"
+        : endReason === "stalemate"
+          ? "（困毙，无子可动）"
+          : endReason === "surrender"
+            ? "（对方认输）"
+            : "";
+    this.app.addChatMessage("系统", `${winText}${reasonText}`, true);
+  }
+
+  /**
+   * 服务端宣布对局结束（认输 / 其他终止情形）
+   */
+  onGameOver(data) {
+    if (!this.gameState) return;
+    this.gameState.gameOver = true;
+    this.gameState.winner = data.winner || null;
+    this.clearSelection();
+    this.renderBoard();
+    this.app.updatePlayerInfo();
+    if (data.message) this.app.addChatMessage("系统", data.message, true);
   }
 
   renderBoard() {
@@ -129,70 +179,76 @@ export class ChessGameClient {
     }
 
     this.renderValidMoves();
+
+    // 尺寸变化后重绘时保留选中态
+    if (this.selectedPiece) {
+      const selectedEl = this.boardEl.querySelector(
+        `[data-row="${this.selectedPiece.row}"][data-col="${this.selectedPiece.col}"]`,
+      );
+      if (selectedEl) selectedEl.classList.add("selected");
+    }
   }
 
   drawBoardGrid() {
     const board = this.boardEl;
-    const gridSpacing = 60; // 网格间距（与棋子位置计算保持一致）
+    const { grid, margin } = this.computeMetrics();
+    const gridSize = Math.max(1.5, grid * 0.035);
 
-    // 垂直线：画在列交叉点上，共9条（列索引0-8，对应位置0, 60, 120, ..., 480）
-    // 河界位置（第4行和第5行之间，即240px到300px）的竖线要去掉
-    const riverTop = 4 * gridSpacing; // 240px
-    const riverBottom = 5 * gridSpacing; // 300px
-    
-    // 画在列0-8的位置（对应col=0到col=8的交叉点）
-    for (let col = 0; col <= 8; col++) {
-      const x = col * gridSpacing;
-      
-      // 边界的两条竖线（col=0和col=8）需要贯穿整个棋盘
-      if (col === 0 || col === 8) {
+    // 河界（第 4 行与第 5 行之间）文字位置随棋盘尺寸自适应
+    const riverEl = board.querySelector(".river");
+    if (riverEl) {
+      riverEl.style.top = `${margin + 4 * grid}px`;
+      riverEl.style.height = `${grid}px`;
+      riverEl.style.fontSize = `${Math.max(14, grid * 0.44)}px`;
+      riverEl.style.letterSpacing = `${Math.max(4, grid * 0.2)}px`;
+    }
+
+    // 垂直线：col 0-8 共 9 条，中间 7 条在河界处断开
+    for (let col = 0; col <= COLS; col++) {
+      const x = margin + col * grid;
+
+      if (col === 0 || col === COLS) {
         const line = document.createElement("div");
         line.className = "grid-line grid-line-vertical";
         line.style.left = `${x}px`;
-        line.style.top = "0";
-        line.style.width = "2px";
-        line.style.height = "540px";
+        line.style.top = `${margin}px`;
+        line.style.width = `${gridSize}px`;
+        line.style.height = `${ROWS * grid}px`;
         board.appendChild(line);
       } else {
-        // 中间的竖线需要在河界处断开
-        // 上半部分（0到河界上方）
         const lineTop = document.createElement("div");
         lineTop.className = "grid-line grid-line-vertical";
         lineTop.style.left = `${x}px`;
-        lineTop.style.top = "0";
-        lineTop.style.width = "2px";
-        lineTop.style.height = `${riverTop}px`;
+        lineTop.style.top = `${margin}px`;
+        lineTop.style.width = `${gridSize}px`;
+        lineTop.style.height = `${4 * grid}px`;
         board.appendChild(lineTop);
-        
-        // 下半部分（河界下方到棋盘底部）
+
         const lineBottom = document.createElement("div");
         lineBottom.className = "grid-line grid-line-vertical";
         lineBottom.style.left = `${x}px`;
-        lineBottom.style.top = `${riverBottom}px`;
-        lineBottom.style.width = "2px";
-        lineBottom.style.height = `${540 - riverBottom}px`;
+        lineBottom.style.top = `${margin + 5 * grid}px`;
+        lineBottom.style.width = `${gridSize}px`;
+        lineBottom.style.height = `${4 * grid}px`;
         board.appendChild(lineBottom);
       }
     }
 
-    // 水平线：画在行交叉点上，共10条（行索引0-9，对应位置0, 60, 120, ..., 540）
-    // 画在行0-9的位置（对应row=0到row=9的交叉点）
-    for (let row = 0; row <= 9; row++) {
-      const y = row * gridSpacing;
+    // 水平线：row 0-9 共 10 条
+    for (let row = 0; row <= ROWS; row++) {
+      const y = margin + row * grid;
       const line = document.createElement("div");
       line.className = "grid-line grid-line-horizontal";
-      line.style.left = "0";
+      line.style.left = `${margin}px`;
       line.style.top = `${y}px`;
-      line.style.width = "100%";
-      line.style.height = "2px";
+      line.style.width = `${COLS * grid}px`;
+      line.style.height = `${gridSize}px`;
       board.appendChild(line);
     }
 
-    // 绘制九宫格斜线
-    // 红方九宫格（下方，row 7-9, col 3-5）
-    this.drawPalaceLines(board, 7, 9, 3, 5, gridSpacing);
-    // 黑方九宫格（上方，row 0-2, col 3-5）
-    this.drawPalaceLines(board, 0, 2, 3, 5, gridSpacing);
+    // 九宫格斜线：红方（下）与黑方（上）
+    this.drawPalaceLines(board, 7, 9, 3, 5, grid, margin);
+    this.drawPalaceLines(board, 0, 2, 3, 5, grid, margin);
   }
 
   /**
@@ -202,17 +258,18 @@ export class ChessGameClient {
    * @param {number} endRow - 结束行
    * @param {number} startCol - 起始列
    * @param {number} endCol - 结束列
-   * @param {number} gridSpacing - 网格间距
+   * @param {number} grid - 交叉点间距
+   * @param {number} margin - 棋盘内边距
    */
-  drawPalaceLines(board, startRow, endRow, startCol, endCol, gridSpacing) {
+  drawPalaceLines(board, startRow, endRow, startCol, endCol, grid, margin) {
     // 左上角交叉点到右下角交叉点
-    const x1 = startCol * gridSpacing;
-    const y1 = startRow * gridSpacing;
-    const x2 = endCol * gridSpacing;
-    const y2 = endRow * gridSpacing;
+    const x1 = margin + startCol * grid;
+    const y1 = margin + startRow * grid;
+    const x2 = margin + endCol * grid;
+    const y2 = margin + endRow * grid;
     const length = Math.hypot(x2 - x1, y2 - y1);
     const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
-    
+
     const diag1 = document.createElement("div");
     diag1.className = "palace-line";
     diag1.style.left = `${x1}px`;
@@ -224,13 +281,13 @@ export class ChessGameClient {
     board.appendChild(diag1);
 
     // 右上角交叉点到左下角交叉点
-    const x3 = endCol * gridSpacing;
-    const y3 = startRow * gridSpacing;
-    const x4 = startCol * gridSpacing;
-    const y4 = endRow * gridSpacing;
+    const x3 = margin + endCol * grid;
+    const y3 = margin + startRow * grid;
+    const x4 = margin + startCol * grid;
+    const y4 = margin + endRow * grid;
     const length2 = Math.hypot(x4 - x3, y4 - y3);
     const angle2 = (Math.atan2(y4 - y3, x4 - x3) * 180) / Math.PI;
-    
+
     const diag2 = document.createElement("div");
     diag2.className = "palace-line";
     diag2.style.left = `${x3}px`;
@@ -243,6 +300,8 @@ export class ChessGameClient {
   }
 
   createPieceElement(pieceCode, row, col) {
+    const { grid, margin, pieceSize } = this.computeMetrics();
+
     const pieceElement = document.createElement("div");
     pieceElement.className = `piece ${pieceCode === pieceCode.toUpperCase() ? "red" : "black"}`;
     pieceElement.textContent = this.pieceMap[pieceCode] || pieceCode;
@@ -250,13 +309,12 @@ export class ChessGameClient {
     pieceElement.dataset.col = String(col);
     pieceElement.dataset.piece = pieceCode;
 
-    // 棋子应该画在交叉点上，以交叉点为中心
-    // 交叉点坐标：col * 60, row * 60
-    // 棋子大小：56px，所以需要减去一半（28px）来居中
-    const pieceSize = 56;
-    const gridSpacing = 60;
-    pieceElement.style.left = `${col * gridSpacing - pieceSize / 2}px`;
-    pieceElement.style.top = `${row * gridSpacing - pieceSize / 2}px`;
+    // 棋子以交叉点为中心，尺寸随棋盘自适应，保证不越出棋盘边框
+    pieceElement.style.width = `${pieceSize}px`;
+    pieceElement.style.height = `${pieceSize}px`;
+    pieceElement.style.fontSize = `${Math.max(12, pieceSize * 0.44)}px`;
+    pieceElement.style.left = `${margin + col * grid - pieceSize / 2}px`;
+    pieceElement.style.top = `${margin + row * grid - pieceSize / 2}px`;
 
     pieceElement.addEventListener("click", () => this.handlePieceClick(pieceCode, row, col));
     this.boardEl.appendChild(pieceElement);
@@ -312,14 +370,16 @@ export class ChessGameClient {
 
   renderValidMoves() {
     this.boardEl.querySelectorAll(".valid-move").forEach((el) => el.remove());
+    const { grid, margin } = this.computeMetrics();
+    const indicatorSize = Math.max(10, grid * 0.3);
+
     this.validMoves.forEach(([row, col]) => {
       const indicator = document.createElement("div");
       indicator.className = "valid-move";
-      // 可走位置指示器也应该以交叉点为中心
-      const gridSpacing = 60;
-      const indicatorSize = 20;
-      indicator.style.left = `${col * gridSpacing - indicatorSize / 2}px`;
-      indicator.style.top = `${row * gridSpacing - indicatorSize / 2}px`;
+      indicator.style.width = `${indicatorSize}px`;
+      indicator.style.height = `${indicatorSize}px`;
+      indicator.style.left = `${margin + col * grid - indicatorSize / 2}px`;
+      indicator.style.top = `${margin + row * grid - indicatorSize / 2}px`;
       indicator.addEventListener("click", () => this.movePiece(row, col));
       this.boardEl.appendChild(indicator);
     });
@@ -346,12 +406,22 @@ export class ChessGameClient {
 
     if (!this.gameActive() || !this.selectedPiece) return;
 
-    const boardRect = this.boardEl.getBoundingClientRect();
-    const gridSpacing = 60;
-    const col = Math.round((e.clientX - boardRect.left) / gridSpacing);
-    const row = Math.round((e.clientY - boardRect.top) / gridSpacing);
+    const el = this.boardEl;
+    const boardRect = el.getBoundingClientRect();
+    // 兼容边框与 CSS 缩放：把视口坐标换算回棋盘内部坐标
+    const scaleX = boardRect.width ? el.offsetWidth / boardRect.width : 1;
+    const scaleY = boardRect.height ? el.offsetHeight / boardRect.height : 1;
+    const borderX = (el.offsetWidth - el.clientWidth) / 2;
+    const borderY = (el.offsetHeight - el.clientHeight) / 2;
 
-    if (row < 0 || row > 9 || col < 0 || col > 8) return;
+    const { grid, margin } = this.computeMetrics();
+    const localX = (e.clientX - boardRect.left) * scaleX - borderX;
+    const localY = (e.clientY - boardRect.top) * scaleY - borderY;
+
+    const col = Math.round((localX - margin) / grid);
+    const row = Math.round((localY - margin) / grid);
+
+    if (row < 0 || row > ROWS || col < 0 || col > COLS) return;
 
     // 检查点击的交叉点是否是合法走法
     const canMove = this.validMoves.some(([r, c]) => r === row && c === col);

@@ -11,6 +11,8 @@
  * 555 = 中心区域
  */
 
+import { fitCanvas, onCanvasResize } from "../../core/canvasFit.js";
+
 // 游戏状态枚举
 const GAME_PHASE = {
   WAITING_DICE: "WAITING_DICE",
@@ -44,21 +46,22 @@ export class FlyingGameClient {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.state = null;
+    this._unbindResize = null;
     
     // 骰子动画（已移除，不再需要）
     // this.diceAnimation = { ... };
 
     this._onClick = (e) => this.handleClick(e);
     
-    // 棋盘配置
+    // 棋盘配置（配色与平台暗色主题协调：降低饱和度，提高在深色底上的可读性）
     this.boardConfig = {
       cellSize: 50,
       layout: BOARD_LAYOUT,
       colors: {
-        yellow: "#faad14",
-        blue: "#1890ff",
-        red: "#ff4d4f",
-        green: "#52c41a",
+        yellow: "#E5B84A",
+        blue: "#4F8FE8",
+        red: "#E05C55",
+        green: "#4FB477",
       },
     };
     
@@ -80,17 +83,33 @@ export class FlyingGameClient {
   initWithState(state) {
     this.state = state;
     this.canvas.addEventListener("click", this._onClick);
+    this._unbindResize = onCanvasResize(() => this.render());
     this.render();
   }
 
   destroy() {
     this.canvas.removeEventListener("click", this._onClick);
+    this._unbindResize?.();
+    this._unbindResize = null;
   }
 
   onGameRestarted(data) {
     this.state = data.gameState;
     this.render();
     this.app.updatePlayerInfo();
+  }
+
+  /**
+   * 服务端宣布对局结束（认输等）
+   */
+  onGameOver(data) {
+    this.state = this.state || {};
+    this.state.gameOver = true;
+    this.state.winner = data.winner || null;
+    this.state.phase = GAME_PHASE.GAME_OVER;
+    this.render();
+    this.app.updatePlayerInfo();
+    if (data.message) this.app.addChatMessage("系统", data.message, true);
   }
 
   onFlyingState(nextState) {
@@ -139,68 +158,58 @@ export class FlyingGameClient {
     }
   }
   
+  /**
+   * 掷骰子弹窗：用 DOM + CSS 自绘骰子点数，不依赖任何外部图片资源
+   * （原实现引用 ./gif/<点数>.gif，仓库中并无该目录，必然 404 后降级为文字）
+   */
   showDiceAnimation(diceValue) {
-    console.log('[飞行棋客户端] 显示骰子动画:', diceValue);
-    
-    // 创建弹窗容器
-    const overlay = document.createElement('div');
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
-    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-    overlay.style.display = 'flex';
-    overlay.style.justifyContent = 'center';
-    overlay.style.alignItems = 'center';
-    overlay.style.zIndex = '10000';
-    
-    // 创建GIF图片
-    const img = document.createElement('img');
-    // 修复路径：使用相对路径
-    img.src = `./gif/${diceValue}.gif`;
-    img.alt = `骰子${diceValue}点`;
-    img.style.maxWidth = '400px';
-    img.style.maxHeight = '400px';
-    img.style.borderRadius = '10px';
-    img.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.5)';
-    img.style.backgroundColor = '#fff';
-    
-    // 添加加载错误处理
-    img.onerror = () => {
-      console.error('[飞行棋客户端] GIF加载失败:', img.src);
-      // 如果GIF加载失败，显示文字
-      const text = document.createElement('div');
-      text.textContent = `🎲 ${diceValue}`;
-      text.style.fontSize = '120px';
-      text.style.color = '#fff';
-      text.style.fontWeight = 'bold';
-      text.style.textShadow = '0 4px 20px rgba(0, 0, 0, 0.8)';
-      overlay.innerHTML = '';
-      overlay.appendChild(text);
+    const existing = document.querySelector(".dice-overlay");
+    if (existing) existing.remove();
+
+    // 1-6 点在 3x3 网格中的位置索引
+    const PIP_LAYOUT = {
+      1: [4],
+      2: [0, 8],
+      3: [0, 4, 8],
+      4: [0, 2, 6, 8],
+      5: [0, 2, 4, 6, 8],
+      6: [0, 2, 3, 5, 6, 8],
     };
-    
-    img.onload = () => {
-      console.log('[飞行棋客户端] GIF加载成功:', img.src);
-    };
-    
-    overlay.appendChild(img);
+    const pips = PIP_LAYOUT[diceValue] || [];
+
+    const overlay = document.createElement("div");
+    overlay.className = "dice-overlay";
+
+    const dice = document.createElement("div");
+    dice.className = "dice rolling";
+
+    for (let i = 0; i < 9; i++) {
+      const cell = document.createElement("span");
+      cell.className = "dice-cell";
+      if (pips.includes(i)) cell.classList.add("pip");
+      dice.appendChild(cell);
+    }
+
+    overlay.appendChild(dice);
     document.body.appendChild(overlay);
-    
-    // 2秒后自动移除弹窗
+
+    // 短暂滚动动画后定格到实际点数
+    setTimeout(() => dice.classList.remove("rolling"), 600);
     setTimeout(() => {
-      if (document.body.contains(overlay)) {
-        document.body.removeChild(overlay);
-      }
-    }, 2000);
+      if (document.body.contains(overlay)) overlay.remove();
+    }, 1800);
   }
   
   handleClick(e) {
     if (!this.state || this.app.gameType !== "flying") return;
     
     const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // 画布按显示尺寸做高清重绘，需换算回 15×cellSize 的逻辑坐标再做命中判定
+    const VIEW = 15 * this.boardConfig.cellSize;
+    const cssW = this.canvas.clientWidth || rect.width || VIEW;
+    const scale = VIEW / cssW;
+    const x = (e.clientX - rect.left) * scale;
+    const y = (e.clientY - rect.top) * scale;
     
     // 检查是否点击了棋子
     if (this.state.phase !== GAME_PHASE.SELECTING_PLANE || !this.state.dice) {
@@ -277,18 +286,17 @@ export class FlyingGameClient {
 
   render() {
     const ctx = this.ctx;
-    const canvas = this.canvas;
     const { cellSize } = this.boardConfig;
-    
-    // 设置画布大小 - 只显示棋盘
-    canvas.width = 15 * cellSize;
-    canvas.height = 15 * cellSize;
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const VIEW = 15 * cellSize; // 750：逻辑坐标系边长
 
-    // 背景
-    ctx.fillStyle = "#fef8e8";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // 位图对齐 CSS 显示尺寸 × dpr，保证像素级清晰
+    fitCanvas(this.canvas, ctx, VIEW, VIEW);
+    
+    ctx.clearRect(0, 0, VIEW, VIEW);
+
+    // 背景：暗色石板（与平台视觉一致）
+    ctx.fillStyle = "#14171C";
+    ctx.fillRect(0, 0, VIEW, VIEW);
 
     const state = this.state || {};
     const players = state.players || {};
@@ -303,7 +311,7 @@ export class FlyingGameClient {
     const cols = layout[0].length;
     
     // 绘制网格
-    ctx.strokeStyle = "#ddd";
+    ctx.strokeStyle = "rgba(255,255,255,.05)";
     ctx.lineWidth = 1;
     
     for (let i = 0; i <= cols; i++) {
@@ -333,7 +341,7 @@ export class FlyingGameClient {
         } else if (cellNum >= 1 && cellNum <= 52) {
           // 主路径（001-052）
           const cellColor = this.mainPathColors[cellNum];
-          ctx.fillStyle = colors[cellColor] + "30";
+          ctx.fillStyle = colors[cellColor] + "3A";
           ctx.strokeStyle = colors[cellColor];
           ctx.lineWidth = 2;
           ctx.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
@@ -352,7 +360,7 @@ export class FlyingGameClient {
           this.drawColorCell(ctx, x, y, cellSize, cellNum, "green");
         } else if (cellNum === 555) {
           // 中心区域
-          ctx.fillStyle = "#f0f0f0";
+          ctx.fillStyle = "#1A1E24";
           ctx.fillRect(x, y, cellSize, cellSize);
         }
       }
@@ -365,21 +373,21 @@ export class FlyingGameClient {
     
     if (cellNum % 100 === 0) {
       // 基地（x00）
-      ctx.fillStyle = colorHex + "20";
+      ctx.fillStyle = colorHex + "2A";
       ctx.strokeStyle = colorHex;
       ctx.lineWidth = 3;
       ctx.fillRect(x, y, cellSize, cellSize);
       ctx.strokeRect(x, y, cellSize, cellSize);
     } else if (cellNum % 100 === 1) {
       // 起飞点（x01）
-      ctx.fillStyle = colorHex + "40";
+      ctx.fillStyle = colorHex + "55";
       ctx.strokeStyle = colorHex;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * 0.4, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      
+
       ctx.fillStyle = "#fff";
       ctx.font = "bold 14px Arial";
       ctx.textAlign = "center";
@@ -387,7 +395,7 @@ export class FlyingGameClient {
       ctx.fillText("起", x + cellSize / 2, y + cellSize / 2);
     } else if (cellNum % 100 >= 10 && cellNum % 100 <= 50) {
       // 终点通道（x10-x50）
-      ctx.fillStyle = colorHex + "50";
+      ctx.fillStyle = colorHex + "5A";
       ctx.strokeStyle = colorHex;
       ctx.lineWidth = 2;
       ctx.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
@@ -438,7 +446,7 @@ export class FlyingGameClient {
           this.state?.canMovePlanes &&
           this.state.canMovePlanes.includes(hArea.pieceIndex) &&
           hArea.ownerId === this.app.clientId) {
-        ctx.strokeStyle = "#ffd700";
+        ctx.strokeStyle = "#D9A441";
         ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.arc(0, 0, cellSize * 0.35, 0, Math.PI * 2);

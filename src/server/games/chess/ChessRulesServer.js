@@ -150,6 +150,47 @@ class ChessRules {
     return null;
   }
 
+  /**
+   * 判断某方是否还存在合法着法（用于绝杀 / 困毙判定）
+   *
+   * 合法着法 = 走法本身合乎棋子规则，且走完后己方将/帅不处于被将军状态。
+   * 若返回 false：
+   *   - 该方正被将军 → 绝杀（checkmate）
+   *   - 该方未被将军 → 困毙 / 无着可走（stalemate，中国象棋同样判负）
+   *
+   * @param {Array} board - 棋盘
+   * @param {string} color - 'red' 或 'black'
+   * @returns {boolean} - true 表示还有合法着法
+   */
+  static hasLegalMove(board, color) {
+    for (let row = 0; row < 10; row++) {
+      for (let col = 0; col < 9; col++) {
+        const piece = board[row][col];
+        if (!piece) continue;
+
+        const pieceColor = piece === piece.toUpperCase() ? "red" : "black";
+        if (pieceColor !== color) continue;
+
+        for (let toRow = 0; toRow < 10; toRow++) {
+          for (let toCol = 0; toCol < 9; toCol++) {
+            if (!this.isValidMove(board, row, col, toRow, toCol).valid) continue;
+
+            // 试走一步，检查走完后己方是否仍被将军；无论结果都要还原棋盘
+            const targetPiece = board[toRow][toCol];
+            board[toRow][toCol] = piece;
+            board[row][col] = null;
+            const stillInCheck = this.isCheck(board, color);
+            board[row][col] = piece;
+            board[toRow][toCol] = targetPiece;
+
+            if (!stillInCheck) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   static isValidAdvisorMove(piece, fromRow, fromCol, toRow, toCol) {
     const isRed = piece === "A";
     const rowDiff = Math.abs(toRow - fromRow);

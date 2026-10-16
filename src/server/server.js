@@ -16,6 +16,13 @@ const {
   ensureFlyingPlayer,
   applyFlyingAction,
 } = require("./games/flying/flyingGame");
+const {
+  createMonopolyState,
+  ensureMonopolyPlayer,
+  cleanupMonopolyPlayer,
+  applyMonopolyAction,
+  makeMonopolyBroadcastPayload,
+} = require("./games/monopoly/monopolyGame");
 
 /**
  * 服务器说明
@@ -149,11 +156,20 @@ class GameServer {
       case "flying_action":
         this.handleFlyingAction(clientId, data);
         break;
+      case "monopoly_action":
+        this.handleMonopolyAction(clientId, data);
+        break;
       case "chat":
         this.handleChat(clientId, data);
         break;
+      case "leave_room":
+        this.leaveRoom(clientId);
+        break;
       case "restart":
         this.handleRestart(clientId);
+        break;
+      case "surrender":
+        this.handleSurrender(clientId);
         break;
       case "get_rooms":
         this.sendRoomList(clientId);
@@ -166,8 +182,11 @@ class GameServer {
     if (!client) return;
     if (client.roomId) this.leaveRoom(clientId);
 
-    const normalizedMaxPlayers =
-      gameType === "flying" ? Math.max(2, Math.min(4, Number(maxPlayers) || 4)) : 2;
+    // 飞行棋与大富翁支持 2~4 人；象棋与坦克固定双人房
+    const multiPlayer = gameType === "flying" || gameType === "monopoly";
+    const normalizedMaxPlayers = multiPlayer
+      ? Math.max(2, Math.min(4, Number(maxPlayers) || 4))
+      : 2;
 
     const roomId = this.generateRoomId();
     const room = {
@@ -186,6 +205,9 @@ class GameServer {
     if (gameType === "flying") {
       ensureFlyingPlayer(room, clientId);
       const playerState = room.gameState.players?.[clientId];
+      client.color = playerState ? playerState.color : null;
+    } else if (gameType === "monopoly") {
+      const playerState = ensureMonopolyPlayer(room, clientId);
       client.color = playerState ? playerState.color : null;
     } else {
       client.color = "red";
@@ -216,13 +238,19 @@ class GameServer {
     const limit = room.maxPlayers || 2;
     if (room.clients.size >= limit) return this.sendError(clientId, "房间已满");
 
-    if (client.roomId) this.leaveRoom(clientId);
+    // 仅在切换到其他房间时才退出旧房间；
+    // 若已在目标房间（建房时自动入房后的重复 join），直接刷新状态即可。
+    // 否则 leaveRoom 会把房内人数减到 0 而销毁房间，导致其他玩家"房间不存在"。
+    if (client.roomId && client.roomId !== roomId) this.leaveRoom(clientId);
 
     room.clients.add(clientId);
     client.roomId = roomId;
     if (room.gameType === "flying") {
       ensureFlyingPlayer(room, clientId);
       const playerState = room.gameState.players?.[clientId];
+      client.color = playerState ? playerState.color : null;
+    } else if (room.gameType === "monopoly") {
+      const playerState = ensureMonopolyPlayer(room, clientId);
       client.color = playerState ? playerState.color : null;
     } else {
       client.color = room.gameType === "chess" ? "black" : "blue";
@@ -253,6 +281,20 @@ class GameServer {
       },
       clientId,
     );
+
+    // 新玩家加入可能触发飞行棋自动开局 / 坦克补位，
+    // 需向全房同步一次权威状态，否则房主端会停留在旧的空状态
+    if (room.gameType === "flying") {
+      this.broadcastToRoom(room.id, {
+        type: "flying_state",
+        gameType: "flying",
+        state: room.gameState,
+      });
+    } else if (room.gameType === "tank") {
+      this.broadcastToRoom(room.id, makeTankBroadcastPayload(room));
+    } else if (room.gameType === "monopoly") {
+      this.broadcastToRoom(room.id, makeMonopolyBroadcastPayload(room));
+    }
 
     this.broadcastRoomList();
   }
@@ -319,6 +361,22 @@ class GameServer {
     }
   }
 
+  /**
+   * 大富翁：权威动作处理
+   * 客户端只上报意图（roll / buy / end_turn / build / mortgage / unmortgage / pay_bail / use_jail_card），
+   * 全部判定在服务端完成后广播整份权威状态
+   */
+  handleMonopolyAction(clientId, data) {
+    const client = this.clients.get(clientId);
+    if (!client || !client.roomId) return;
+    const room = this.rooms.get(client.roomId);
+    if (!room || room.gameType !== "monopoly") return;
+
+    const result = applyMonopolyAction(room, clientId, data || {});
+    if (!result.ok) return this.sendError(clientId, result.error);
+    if (result.payload) this.broadcastToRoom(room.id, result.payload);
+  }
+
   handleChat(clientId, data) {
     const client = this.clients.get(clientId);
     if (!client || !client.roomId) return;
@@ -341,11 +399,13 @@ class GameServer {
     });
     room.turn = "red";
 
-    // 重新为坦克 / 飞行棋房间补充玩家状态
+    // 重新为坦克 / 飞行棋 / 大富翁房间补充玩家状态
     if (room.gameType === "tank") {
       ensureTankPlayers(room);
     } else if (room.gameType === "flying") {
       Array.from(room.clients).forEach((cid) => ensureFlyingPlayer(room, cid));
+    } else if (room.gameType === "monopoly") {
+      Array.from(room.clients).forEach((cid) => ensureMonopolyPlayer(room, cid));
     }
 
     this.broadcastToRoom(room.id, {
@@ -353,6 +413,51 @@ class GameServer {
       gameState: room.gameState,
       turn: room.turn,
       message: "游戏已重新开始",
+    });
+  }
+
+  /**
+   * 认输：当前玩家认输，对手直接获胜
+   * 兼容象棋 / 坦克 / 飞行棋三种房间
+   */
+  handleSurrender(clientId) {
+    const client = this.clients.get(clientId);
+    if (!client || !client.roomId) return;
+    const room = this.rooms.get(client.roomId);
+    if (!room || !room.gameState) return;
+
+    const state = room.gameState;
+    if (state.gameOver) return;
+
+    // 对手：房间内除自己以外的第一个玩家（单人练习时无对手）
+    const opponentId = Array.from(room.clients).find((cid) => cid !== clientId);
+    const opponent = opponentId ? this.clients.get(opponentId) : null;
+    const winner = opponent ? opponent.color : null;
+
+    state.gameOver = true;
+    state.winner = winner;
+    if (room.gameType === "flying" || room.gameType === "monopoly") {
+      state.phase = "GAME_OVER";
+    }
+
+    const colorText = {
+      red: "红方",
+      black: "黑方",
+      blue: "蓝方",
+      yellow: "黄方",
+      green: "绿方",
+    };
+    const loserText = client.color ? `${colorText[client.color] || client.color}` : "玩家";
+
+    this.broadcastToRoom(room.id, {
+      type: "game_over",
+      gameType: room.gameType,
+      winner,
+      reason: "surrender",
+      clientId,
+      message: winner
+        ? `${loserText}认输，${colorText[winner] || winner}获胜！`
+        : `${loserText}认输，本局结束。`,
     });
   }
 
@@ -370,6 +475,9 @@ class GameServer {
     if (room) {
       room.clients.delete(clientId);
 
+      // 清理该玩家在权威对局状态中的残留，避免对局卡死（坦克永不结束 / 飞行棋轮空）
+      this.cleanupPlayerState(room, clientId);
+
       this.broadcastToRoom(
         room.id,
         {
@@ -380,12 +488,83 @@ class GameServer {
         clientId,
       );
 
+      // 玩家退出会改变权威状态，主动同步一帧给其余玩家
+      if (room.gameType === "tank") {
+        this.broadcastToRoom(room.id, makeTankBroadcastPayload(room));
+      } else if (room.gameType === "flying") {
+        this.broadcastToRoom(room.id, {
+          type: "flying_state",
+          gameType: "flying",
+          state: room.gameState,
+        });
+      } else if (room.gameType === "monopoly") {
+        this.broadcastToRoom(room.id, makeMonopolyBroadcastPayload(room));
+      }
+
       if (room.clients.size === 0) this.rooms.delete(room.id);
       this.broadcastRoomList();
     }
 
     client.roomId = null;
     client.color = null;
+  }
+
+  /**
+   * 玩家离开后清理其在对局状态中的残留数据
+   * - 坦克：置为阵亡，交由 tick 判胜结算
+   * - 飞行棋：从 order / players 中移除，人数不足则回到等待状态
+   * - 象棋：无需处理（服务端回合与阵营校验会自动拒绝其后续走子）
+   */
+  cleanupPlayerState(room, clientId) {
+    const state = room.gameState;
+    if (!state) return;
+
+    if (room.gameType === "tank") {
+      const player = state.players?.[clientId];
+      if (player) {
+        player.isAlive = false;
+        player.health = 0;
+        player.keys = { left: false, right: false, up: false, down: false, shoot: false };
+      }
+      return;
+    }
+
+    if (room.gameType === "flying") {
+      if (state.players) delete state.players[clientId];
+
+      if (Array.isArray(state.order)) {
+        const idx = state.order.indexOf(clientId);
+        if (idx !== -1) state.order.splice(idx, 1);
+      }
+      if (!Array.isArray(state.order) || state.order.length === 0) {
+        state.currentIndex = 0;
+      } else if (state.currentIndex >= state.order.length) {
+        state.currentIndex = 0;
+      }
+
+      state.dice = null;
+      state.canMovePlanes = [];
+      state.consecutiveSixCount = 0;
+
+      if (state.order.length < 2) {
+        state.gameStarted = false;
+        state.phase = "WAITING_DICE";
+        state.turn = null;
+        state.lastAction = "玩家不足 2 人，等待其他玩家加入…";
+      } else if (state.gameStarted) {
+        const currentPlayer = state.players[state.order[state.currentIndex]];
+        state.phase = "WAITING_DICE";
+        state.turn = currentPlayer ? currentPlayer.color : null;
+        state.lastAction = "有玩家离开，继续游戏";
+      }
+      return;
+    }
+
+    if (room.gameType === "monopoly") {
+      // 大富翁：名下地产回归银行并从名次中移除；不足 2 人则暂停牌局
+      cleanupMonopolyPlayer(room, clientId);
+      return;
+    }
   }
 
   broadcastToRoom(roomId, message, excludeClientId = null) {
@@ -440,6 +619,7 @@ class GameServer {
   initializeGameState(gameType = "chess", options = {}) {
     if (gameType === "tank") return createTankState();
     if (gameType === "flying") return createFlyingState(options.maxPlayers || 4);
+    if (gameType === "monopoly") return createMonopolyState(options.maxPlayers || 4);
     return createChessState();
   }
 

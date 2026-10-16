@@ -93,6 +93,64 @@ export class ChessRules {
     return false;
   }
 
+  /**
+   * 查找将/帅位置
+   * @returns {[number, number]|null}
+   */
+  static findKing(board, color) {
+    const king = color === "red" ? "K" : "k";
+    for (let row = 0; row < 10; row++) {
+      for (let col = 0; col < 9; col++) {
+        if (board[row][col] === king) return [row, col];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 判断某方是否被将军（与服务端 ChessRules.isCheck 保持一致）
+   */
+  static isCheck(board, color) {
+    const kingPos = this.findKing(board, color);
+    if (!kingPos) return false;
+
+    const [kingRow, kingCol] = kingPos;
+    const opponentColor = color === "red" ? "black" : "red";
+
+    for (let row = 0; row < 10; row++) {
+      for (let col = 0; col < 9; col++) {
+        const piece = board[row][col];
+        if (!piece) continue;
+
+        const pieceColor = piece === piece.toUpperCase() ? "red" : "black";
+        if (pieceColor !== opponentColor) continue;
+
+        if (this.isValidMove(board, row, col, kingRow, kingCol).valid) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 试走一步并判断走完后走子方是否安全（不被将军）
+   * 用于过滤"自杀棋"，与服务端"走后自检"保持一致
+   */
+  static isSafeMove(board, fromRow, fromCol, toRow, toCol) {
+    const piece = board[fromRow][fromCol];
+    if (!piece) return false;
+
+    const color = piece === piece.toUpperCase() ? "red" : "black";
+    const targetPiece = board[toRow][toCol];
+
+    board[toRow][toCol] = piece;
+    board[fromRow][fromCol] = null;
+    const safe = !this.isCheck(board, color);
+    board[fromRow][fromCol] = piece;
+    board[toRow][toCol] = targetPiece;
+
+    return safe;
+  }
+
   static isValidAdvisorMove(piece, fromRow, fromCol, toRow, toCol) {
     const isRed = piece === "A";
     const rowDiff = Math.abs(toRow - fromRow);
@@ -193,7 +251,10 @@ export class ChessRules {
     for (let toRow = 0; toRow < 10; toRow++) {
       for (let toCol = 0; toCol < 9; toCol++) {
         const result = this.isValidMove(board, row, col, toRow, toCol);
-        if (result.valid) moves.push({ row: toRow, col: toCol, captures: result.captures });
+        if (!result.valid) continue;
+        // 过滤会导致己方被将军的着法（自杀棋 / 未应将），与服务端权威判定对齐
+        if (!this.isSafeMove(board, row, col, toRow, toCol)) continue;
+        moves.push({ row: toRow, col: toCol, captures: result.captures });
       }
     }
     return moves;

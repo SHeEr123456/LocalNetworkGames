@@ -7,6 +7,15 @@
 import { ChessGameClient } from "../games/chess/ChessGameClient.js";
 import { TankGameClient } from "../games/tank/TankGameClient.js";
 import { FlyingGameClient } from "../games/flying/FlyingGameClient.js";
+import { MonopolyGameClient } from "../games/monopoly/MonopolyGameClient.js";
+
+/** 游戏类型 → 中文名（大厅、房间栏、房间列表共用） */
+const GAME_LABELS = {
+  chess: "中国象棋",
+  tank: "坦克大战",
+  flying: "飞行棋",
+  monopoly: "大富翁 · 厦门",
+};
 
 export class OnlineGameApp {
   constructor({ el }) {
@@ -47,12 +56,65 @@ export class OnlineGameApp {
       this.el.rollDiceBtn.addEventListener("click", () => this.rollDice());
     }
 
+    // 大厅：游戏卡片与侧栏导航共用一套选择逻辑，结果写入隐藏的 gameSelect
+    this.el.gameGrid?.addEventListener("click", (e) => {
+      const card = e.target.closest("[data-game]");
+      if (card) this.selectGame(card.dataset.game);
+    });
+    this.el.gameNav?.addEventListener("click", (e) => {
+      const item = e.target.closest("[data-game]");
+      if (item) this.selectGame(item.dataset.game, true);
+    });
+    this.el.quickCreateBtn?.addEventListener("click", () => this.createRoom());
+    this.el.backBtn?.addEventListener("click", () => this.leaveToLobby());
+    this.el.gameSelect?.addEventListener("change", () => this.syncGameSelection());
+
+    // 房间列表用事件委托，避免每次渲染重复绑定
+    this.el.roomList?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-join]");
+      if (btn && !btn.disabled) this.joinRoom(btn.dataset.join);
+    });
+
+    this.syncGameSelection();
     this.updateStatus("等待连接服务器...", "info");
+  }
+
+  /** 选择游戏类型（卡片 / 侧栏导航都会调用） */
+  selectGame(gameType, silent = false) {
+    if (!gameType || !this.el.gameSelect) return;
+    this.el.gameSelect.value = gameType;
+    this.syncGameSelection();
+    if (!silent) {
+      this.updateStatus(`已选择「${GAME_LABELS[gameType] || gameType}」，点击「创建新房间」开局`, "info");
+    }
+  }
+
+  /** 让卡片与侧栏导航的高亮状态跟随 gameSelect */
+  syncGameSelection() {
+    const current = this.el.gameSelect?.value;
+    this.el.gameGrid?.querySelectorAll("[data-game]").forEach((el) => {
+      el.classList.toggle("active", el.dataset.game === current);
+    });
+    this.el.gameNav?.querySelectorAll("[data-game]").forEach((el) => {
+      el.classList.toggle("active", el.dataset.game === current);
+    });
+  }
+
+  shortRoomId(id) {
+    return String(id || "").replace(/^room_/, "");
+  }
+
+  /** 主动离开房间并回到大厅（服务端会清理权威状态） */
+  leaveToLobby() {
+    this.send({ type: "leave_room" });
+    this.resetToLobby();
+    this.updateStatus("已返回大厅", "info");
   }
 
   connectFromInput() {
     let address = this.el.serverAddress.value.trim();
-    if (!address) address = `${window.location.hostname}:3000`;
+    // 兜底：跟随当前页面地址（含端口），避免把端口写死
+    if (!address) address = window.location.host || "localhost:3000";
     address = address.replace(/^https?:\/\//, "");
     this.connect(address);
   }
@@ -151,11 +213,30 @@ export class OnlineGameApp {
         }
         break;
 
+      case "monopoly_state":
+        // 大富翁：服务端每次动作后广播整份权威状态
+        if (this.game && this.gameType === "monopoly" && data.state) {
+          this.gameState = data.state;
+          this.game.onMonopolyState(data.state);
+          this.updateRoomTag();
+        }
+        break;
+
       case "game_restarted":
         this.gameState = data.gameState;
         if (this.game) this.game.onGameRestarted(data);
         this.clearMoveHistory();
         this.addChatMessage("系统", data.message || "游戏已重新开始", true);
+        break;
+
+      case "game_over":
+        // 服务端宣布对局结束（认输等）
+        if (this.gameState) {
+          this.gameState.gameOver = true;
+          this.gameState.winner = data.winner || null;
+        }
+        if (this.game) this.game.onGameOver?.(data);
+        this.updatePlayerInfo();
         break;
 
       case "error":
@@ -165,9 +246,11 @@ export class OnlineGameApp {
   }
 
   enterGame() {
-    // UI 切换
-    this.el.connectionPanel.style.display = "none";
+    // 视图切换：大厅 → 房间（侧栏保留，作为连接信息与全局状态区）
+    if (this.el.lobbyView) this.el.lobbyView.style.display = "none";
     this.el.gameContainer.style.display = "flex";
+    if (this.el.createRoomSection) this.el.createRoomSection.style.display = "none";
+    if (this.el.gameSelectSection) this.el.gameSelectSection.style.display = "none";
 
     // 创建/切换游戏实例
     if (this.game) this.game.destroy?.();
@@ -176,10 +259,15 @@ export class OnlineGameApp {
     this.el.chessboard.style.display = "none";
     this.el.tankContainer.style.display = "none";
     if (this.el.flyingContainer) this.el.flyingContainer.style.display = "none";
+    if (this.el.monopolyContainer) this.el.monopolyContainer.style.display = "none";
 
-    // 掷骰按钮：仅飞行棋显示
+    // 掷骰按钮：仅飞行棋使用（大富翁的骰子在自身操作区内）
     if (this.el.rollDiceBtn) {
       this.el.rollDiceBtn.style.display = this.gameType === "flying" ? "inline-block" : "none";
+    }
+
+    if (this.el.roomGameName) {
+      this.el.roomGameName.textContent = GAME_LABELS[this.gameType] || this.gameType;
     }
 
     if (this.gameType === "tank") {
@@ -187,12 +275,24 @@ export class OnlineGameApp {
       this.game = new TankGameClient({
         app: this,
         canvas: this.el.tankCanvas,
+        touchPadEl: this.el.tankTouchPad,
       });
     } else if (this.gameType === "flying") {
       if (this.el.flyingContainer) this.el.flyingContainer.style.display = "block";
       this.game = new FlyingGameClient({
         app: this,
         canvas: this.el.flyingCanvas,
+      });
+    } else if (this.gameType === "monopoly") {
+      if (this.el.monopolyContainer) this.el.monopolyContainer.style.display = "flex";
+      this.game = new MonopolyGameClient({
+        app: this,
+        canvas: this.el.monopolyCanvas,
+        barEl: this.el.monopolyBar,
+        actionsEl: this.el.monopolyActions,
+        playersEl: this.el.monopolyPlayers,
+        ownEl: this.el.monopolyOwn,
+        logEl: this.el.monopolyLog,
       });
     } else {
       this.el.chessboard.style.display = "block";
@@ -204,23 +304,54 @@ export class OnlineGameApp {
     }
 
     this.updatePlayerInfo();
+    this.updateRoomTag();
     this.game.initWithState(this.gameState);
+  }
+
+  /** 房间栏状态标签：已结束 / 等待中 / 对局中 */
+  updateRoomTag() {
+    const el = this.el.roomStateTag;
+    if (!el) return;
+    const s = this.gameState;
+    if (!s) {
+      el.textContent = "等待中";
+      el.className = "tag tag-wait";
+      return;
+    }
+    if (s.gameOver) {
+      el.textContent = "已结束";
+      el.className = "tag tag-over";
+    } else if (s.gameStarted === false) {
+      el.textContent = "等待中";
+      el.className = "tag tag-wait";
+    } else {
+      el.textContent = "对局中";
+      el.className = "tag tag-live";
+    }
   }
 
   resetToLobby() {
     this.roomId = null;
     this.playerColor = null;
-    this.gameType = "chess";
     this.gameState = null;
     if (this.game) this.game.destroy?.();
     this.game = null;
 
-    this.el.connectionPanel.style.display = "block";
+    // 返回大厅视图（侧栏常驻，恢复其中的创建房间区块）
+    if (this.el.lobbyView) this.el.lobbyView.style.display = "block";
     this.el.gameContainer.style.display = "none";
     this.el.roomListContainer.style.display = "none";
+    if (this.el.createRoomSection) this.el.createRoomSection.style.display = "";
+    if (this.el.gameSelectSection) this.el.gameSelectSection.style.display = "";
 
     if (this.el.rollDiceBtn) this.el.rollDiceBtn.style.display = "none";
     if (this.el.flyingContainer) this.el.flyingContainer.style.display = "none";
+    if (this.el.monopolyContainer) this.el.monopolyContainer.style.display = "none";
+
+    if (this.el.roomStateTag) {
+      this.el.roomStateTag.textContent = "等待中";
+      this.el.roomStateTag.className = "tag tag-wait";
+    }
   }
 
   createRoom() {
@@ -261,6 +392,10 @@ export class OnlineGameApp {
     this.send({ type: "flying_action", ...payload });
   }
 
+  sendMonopolyAction(payload) {
+    this.send({ type: "monopoly_action", ...payload });
+  }
+
   sendChatFromInput() {
     const message = this.el.chatInput.value.trim();
     if (!message) return;
@@ -277,10 +412,13 @@ export class OnlineGameApp {
   }
 
   surrender() {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      alert("请先连接到服务器");
+      return;
+    }
+    if (!this.roomId) return;
     if (!confirm("确定要认输吗？")) return;
-    // 当前项目服务端未实现“认输”协议，这里仅做本地提示
-    this.addChatMessage("系统", "你已认输（本地提示），如需联网结算可在服务端补充协议。", true);
-    this.playSound("invalid");
+    this.send({ type: "surrender" });
   }
 
   toggleSound() {
@@ -328,8 +466,11 @@ export class OnlineGameApp {
 
   updateStatus(message, type = "info") {
     const el = this.el.connectionStatus;
+    if (!el) return;
     el.textContent = message;
-    el.style.color = type === "success" ? "#4CAF50" : type === "error" ? "#f44336" : "#2196F3";
+    el.className =
+      "status" +
+      (type === "success" ? " is-success" : type === "error" ? " is-error" : " is-info");
   }
 
   updatePlayerInfo() {
@@ -363,7 +504,9 @@ export class OnlineGameApp {
       this.el.currentTurn.style.color = col;
     }
 
-    this.el.roomId.textContent = this.roomId || "-";
+    const short = this.roomId ? this.shortRoomId(this.roomId) : "-";
+    if (this.el.roomId) this.el.roomId.textContent = short;
+    if (this.el.roomIdEcho) this.el.roomIdEcho.textContent = short;
   }
 
   addChatMessage(sender, message, isSystem = false) {
@@ -388,43 +531,40 @@ export class OnlineGameApp {
   }
 
   renderRoomList(rooms) {
-    const roomListElement = this.el.roomList;
-    roomListElement.innerHTML = "";
+    const el = this.el.roomList;
+    if (!el) return;
+
+    const head =
+      '<div class="row row-head"><span>房间号</span><span>游戏</span><span>人数</span><span>状态</span><span></span></div>';
 
     if (!rooms.length) {
-      roomListElement.innerHTML =
-        '<div style="padding: 20px; text-align: center; color: #666;">暂无可用房间</div>';
+      el.innerHTML = head + '<div class="empty-hint">暂无可用房间，先在左侧创建一个</div>';
       this.el.roomListContainer.style.display = "block";
       return;
     }
 
-    rooms.forEach((room) => {
-      const roomElement = document.createElement("div");
-      roomElement.className = "room-item";
-      const gameLabel =
-        room.gameType === "tank"
-          ? "坦克大战"
-          : room.gameType === "flying"
-            ? "飞行棋"
-            : "中国象棋";
-      const maxPlayers = room.maxPlayers || 2;
-      roomElement.innerHTML = `
-        <div><strong>房间号:</strong> ${room.id}</div>
-        <div><strong>游戏:</strong> ${gameLabel}</div>
-        <div><strong>玩家:</strong> ${room.playerCount}/${maxPlayers}</div>
-        <div><small>创建时间: ${new Date(room.created).toLocaleTimeString()}</small></div>
-      `;
+    el.innerHTML =
+      head +
+      rooms
+        .map((room) => {
+          const maxPlayers = room.maxPlayers || 2;
+          const full = room.playerCount >= maxPlayers;
+          const label = GAME_LABELS[room.gameType] || room.gameType;
+          const joinCell = full
+            ? '<button class="btn btn-sm" type="button" disabled>已满</button>'
+            : `<button class="btn btn-sm btn-solid" type="button" data-join="${room.id}">加入</button>`;
 
-      if (room.playerCount < maxPlayers) {
-        roomElement.addEventListener("click", () => this.joinRoom(room.id));
-      } else {
-        roomElement.style.opacity = "0.6";
-        roomElement.style.cursor = "not-allowed";
-        roomElement.innerHTML += '<div style="color: #f44336;">房间已满</div>';
-      }
-
-      roomListElement.appendChild(roomElement);
-    });
+          return `
+            <div class="row">
+              <span class="tnum">#${this.shortRoomId(room.id)}</span>
+              <span class="row-game">${label}</span>
+              <span class="row-count tnum">${room.playerCount} / ${maxPlayers}</span>
+              <span><span class="tag ${full ? "tag-live" : "tag-wait"}">${full ? "已满员" : "等待中"}</span></span>
+              <span class="row-join">${joinCell}</span>
+            </div>
+          `;
+        })
+        .join("");
 
     this.el.roomListContainer.style.display = "block";
   }
